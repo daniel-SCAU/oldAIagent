@@ -8,6 +8,8 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import logging
 from datetime import datetime
+import os
+import requests
 
 # Configure logging
 logging.basicConfig(
@@ -121,49 +123,72 @@ def process_response():
 
 @app.route('/test-response', methods=['POST'])
 def generate_test_response():
-    """Generate a test response for testing purposes (without userscript)."""
+    """Generate a response by calling the external myGPT API."""
     global stored_prompt, response_history
-    
+
     try:
         data = request.get_json()
         if not data or 'prompt' not in data:
             return jsonify({'error': 'No prompt provided'}), 400
-        
+
         prompt = data['prompt']
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Generate a simple test response based on the prompt
-        if "meeting" in prompt.lower() or "confirm" in prompt.lower():
-            test_response = "Yes, the meeting is confirmed for 10 AM tomorrow. Looking forward to it!"
-        elif "proposal" in prompt.lower() or "think" in prompt.lower():
-            test_response = "I think it looks solid overall, but we might need to refine a couple of points before moving forward."
-        elif "hvornår" in prompt.lower() or "mødes" in prompt.lower():
-            test_response = "Hej! Vi kan mødes i morgen kl. 14:00. Hvad siger du til det?"
-        elif "summary" in prompt.lower() or "status" in prompt.lower():
-            test_response = "Based on the recent messages, here's a brief summary: Several questions were asked about meetings and proposals. All messages require responses."
-        else:
-            test_response = "Thank you for your message. I'll get back to you soon."
-        
+
+        api_url = os.getenv('MYGPT_API_URL')
+        api_key = os.getenv('MYGPT_API_KEY')
+        if not api_url or not api_key:
+            logger.error('MYGPT_API_URL or MYGPT_API_KEY not configured')
+            return jsonify({'error': 'myGPT API is not configured'}), 500
+
+        headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json'
+        }
+
+        try:
+            api_response = requests.post(
+                api_url,
+                headers=headers,
+                json={'prompt': prompt},
+                timeout=30
+            )
+            api_response.raise_for_status()
+            api_data = api_response.json()
+            test_response = api_data.get('response') or api_data.get('answer') or ''
+        except requests.Timeout:
+            logger.error('Request to myGPT API timed out')
+            return jsonify({'error': 'myGPT API request timed out'}), 504
+        except requests.RequestException as e:
+            logger.error(f'myGPT API request failed: {e}')
+            return jsonify({'error': 'myGPT API request failed', 'details': str(e)}), 502
+        except ValueError:
+            logger.error('Invalid JSON from myGPT API')
+            return jsonify({'error': 'Invalid response from myGPT API'}), 502
+
+        if not test_response:
+            logger.warning('Empty response from myGPT API')
+            return jsonify({'error': 'Empty response from myGPT API'}), 502
+
         # Store response in history
         response_history.append({
             'timestamp': timestamp,
             'response': test_response
         })
-        
+
         # Keep only last 10 responses
         if len(response_history) > 10:
             response_history.pop(0)
-        
-        logger.info(f'Test response generated: {len(test_response)} chars')
-        
+
+        logger.info(f'Response received from myGPT API: {len(test_response)} chars')
+
         return jsonify({
             'status': 'success',
-            'message': 'Test response generated',
+            'message': 'Response generated via myGPT API',
             'timestamp': timestamp,
             'response': test_response,
             'response_length': len(test_response)
         })
-        
+
     except Exception as e:
         logger.error(f'Error generating test response: {str(e)}')
         return jsonify({'error': 'Internal server error'}), 500
