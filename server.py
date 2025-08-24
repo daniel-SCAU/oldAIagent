@@ -13,7 +13,6 @@ import requests
 
 from threading import Lock
 
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -25,6 +24,21 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
+#<<<<<<< codex/add-api-key-validation-in-server.py
+# Read API key from environment
+API_KEY = os.getenv("API_KEY")
+
+
+@app.before_request
+def check_api_key():
+    """Validate the X-API-KEY header before handling requests."""
+    if request.headers.get("X-API-KEY") != API_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
+
+# Global variables
+stored_prompt = None
+response_history = []
+#=======
 # In-memory datastore protected by a lock
 
 
@@ -85,6 +99,7 @@ class InMemoryStore:
 
 
 store = InMemoryStore()
+#>>>>>>> main
 
 @app.route('/send-prompt', methods=['POST'])
 def send_prompt():

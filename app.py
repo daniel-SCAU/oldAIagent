@@ -36,7 +36,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("api")
 
-# ------------- App ----------------------
 app = FastAPI(
     title="AI Message Monitoring API",
     version="0.2.0",
