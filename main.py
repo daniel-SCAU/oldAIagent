@@ -29,12 +29,17 @@ def terminate_group(proc, timeout=5):
         os.killpg(proc.pid, signal.SIGKILL)
 
 def run_both():
-    api = spawn([sys.executable, "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8001"])
-    svc = spawn([sys.executable, "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"])
+    api = spawn([sys.executable, "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"])
+    svc = spawn([sys.executable, "server.py"])
+    import threading
+    threads = [
+        threading.Thread(target=stream, args=("api", api), daemon=True),
+        threading.Thread(target=stream, args=("svc", svc), daemon=True),
+    ]
+    for t in threads:
+        t.start()
     try:
         while True:
-            stream("api", api)
-            stream("svc", svc)
             if api.poll() is not None or svc.poll() is not None:
                 break
             time.sleep(0.2)
@@ -43,6 +48,9 @@ def run_both():
     finally:
         terminate_group(api)
         terminate_group(svc)
+        for t in threads:
+            t.join(timeout=0.2)
+
 
 if __name__ == "__main__":
     run_both()

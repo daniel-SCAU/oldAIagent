@@ -236,5 +236,5 @@ def match_context(text: str, match_threshold: float = 0.75, match_count: int = 5
 
 if __name__ == "__main__":
     import uvicorn
-    log.info("Starting API on 0.0.0.0:8001")
-    uvicorn.run("app:app", host="0.0.0.0", port=8001, reload=True)
+    log.info("Starting API on 0.0.0.0:8000")
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
