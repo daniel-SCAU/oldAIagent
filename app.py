@@ -3,6 +3,7 @@ import logging
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional, List, Dict, Any
+import re
 
 import psycopg2
 import psycopg2.pool
@@ -12,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from prompt_sender import myGPTAPI
 
 # ---------------- Config ----------------
 DEBUG = os.getenv("DEBUG", "1") == "1"
@@ -87,6 +89,18 @@ def init_db_schema() -> None:
                 conversation_id TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 summary TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """
+        )
+        # create followup_tasks table
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS followup_tasks (
+                id SERIAL PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                task TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
                 created_at TIMESTAMPTZ DEFAULT NOW()
             )
             """
@@ -167,9 +181,38 @@ class TaskRow(BaseModel):
     summary: Optional[str]
     created_at: datetime
 
+
+class SuggestionIn(BaseModel):
+    conversation_id: str
+    limit: int = 3
+
+
+class SuggestionOut(BaseModel):
+    suggestions: List[str]
+
 # --------- Utilities ---------
 def categorize_message(text: str) -> str:
     return "question" if "?" in (text or "") else "statement"
+
+
+def detect_followup_tasks(text: str) -> List[str]:
+    """Extract possible follow-up tasks from a message.
+
+    A very lightweight heuristic is used: any sentence containing
+    keywords like "todo", "please", "can you" or "follow up" is
+    treated as a task.
+    """
+    tasks: List[str] = []
+    if not text:
+        return tasks
+    for sentence in re.split(r"[\n\.!?]+", text):
+        s = sentence.strip()
+        if not s:
+            continue
+        lower = s.lower()
+        if any(k in lower for k in ["todo", "please", "can you", "could you", "follow up", "follow-up", "remind", "need to"]):
+            tasks.append(s)
+    return tasks
 
 
 def summarize_messages(messages: List[str]) -> str:
@@ -243,7 +286,39 @@ def create_message(msg: MessageIn):
             if not row:
                 raise HTTPException(status_code=500, detail="Insert failed")
             _id, cid, created_at = row
+            tasks = detect_followup_tasks(msg.message)
+            if tasks:
+                sql_task = "INSERT INTO followup_tasks (conversation_id, task) VALUES (%s, %s)"
+                for t in tasks:
+                    cur.execute(sql_task, (cid, t))
             return {"id": _id, "conversation_id": str(cid), "created_at": created_at}
+
+
+@app.post("/suggestions", response_model=SuggestionOut, dependencies=[Depends(require_api_key)])
+def generate_suggestions(req: SuggestionIn):
+    """Generate reply suggestions for a conversation using myGPT."""
+    sql = """
+        SELECT sender, message FROM Chat
+        WHERE conversation_id = %s
+        ORDER BY created_at ASC
+        LIMIT 50
+    """
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(sql, (req.conversation_id,))
+        rows = cur.fetchall()
+    history = "\n".join(f"{s}: {m}" for s, m in rows if m)
+    prompt = (
+        f"Conversation:\n{history}\n"
+        f"Provide {req.limit} possible replies."
+    )
+    api = myGPTAPI()
+    try:
+        result = api.generate_test_response(prompt)
+        text = result.get("response", "")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"myGPT error: {e}")
+    suggestions = [s.strip() for s in text.splitlines() if s.strip()][: req.limit]
+    return {"suggestions": suggestions}
 
 @app.get("/search", response_model=List[MessageRow], dependencies=[Depends(require_api_key)])
 def search_messages(q: str = Query(..., min_length=1), limit: int = Query(50, ge=1, le=500)):
