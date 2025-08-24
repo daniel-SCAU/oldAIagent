@@ -8,8 +8,8 @@ from unittest.mock import patch
 # --- Configuration ---
 FLASK_SERVER_URL = "http://localhost:5000"
 FASTAPI_SERVER_URL = "http://localhost:8000"
-# This API key must match the one in your fixed server.py
-API_KEY = "your-secret-api-key"
+# Canonical API key used by both servers in development
+API_KEY = "dev-api-key"
 HEADERS = {"X-API-KEY": API_KEY}
 
 # --- Helper function to wait for servers ---
@@ -48,9 +48,12 @@ def manage_servers():
         # Start servers and redirect their output to devnull to keep test output clean
         devnull = open(os.devnull, 'w')
         flask_process = subprocess.Popen(["python", "server.py"], stdout=devnull, stderr=devnull)
+        # Ensure FastAPI uses the same API key as the tests
+        env = os.environ.copy()
+        env["API_KEY"] = API_KEY
         fastapi_process = subprocess.Popen(
             ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"],
-            stdout=devnull, stderr=devnull
+            stdout=devnull, stderr=devnull, env=env
         )
 
         # Wait for both servers to be responsive
@@ -141,12 +144,17 @@ class TestFastAPIServer:
             "message": "Hello, this is the first message.",
             "app": "TestApp"
         }
-        store_response = requests.post(f"{FASTAPI_SERVER_URL}/messages", json=message_payload)
+        store_response = requests.post(
+            f"{FASTAPI_SERVER_URL}/messages", json=message_payload, headers=HEADERS
+        )
         assert store_response.status_code == 200
         stored_info = store_response.json()
         conversation_id = stored_info['conversation_id']
 
-        history_response = requests.get(f"{FASTAPI_SERVER_URL}/conversations/{conversation_id}?sender=user123&limit=5")
+        history_response = requests.get(
+            f"{FASTAPI_SERVER_URL}/conversations/{conversation_id}?sender=user123&limit=5",
+            headers=HEADERS,
+        )
         assert history_response.status_code == 200
         history_data = history_response.json()
         assert len(history_data) >= 1
@@ -170,7 +178,9 @@ class TestFastAPIServer:
             # 3. Call the endpoint that USES the mocked functions
             context_payload = {"text": "What is context retrieval?"}
             # Use 'params' for GET-style query parameters, 'json' for POST body
-            response = requests.post(f"{FASTAPI_SERVER_URL}/context", params=context_payload)
+            response = requests.post(
+                f"{FASTAPI_SERVER_URL}/context", params=context_payload, headers=HEADERS
+            )
 
             # 4. Assertions
             assert response.status_code == 200
