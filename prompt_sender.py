@@ -10,22 +10,35 @@ import json
 import time
 from typing import Optional, Dict, Any
 import logging
+import os
+from dataclasses import dataclass
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+__all__ = ["myGPTAPI", "myGPTConfig"]
+
+
+@dataclass
+class myGPTConfig:
+    """Configuration for accessing the myGPT API."""
+    api_url: str = os.getenv("MYGPT_API_URL", "")
+    api_key: str = os.getenv("MYGPT_API_KEY", "")
+
 class myGPTAPI:
     """Python client for the myGPT API server."""
-    
-    def __init__(self, server_url: str = "http://localhost:5000"):
+
+    def __init__(self, server_url: str = "http://localhost:5000", config: Optional[myGPTConfig] = None):
         """
         Initialize the myGPT API client.
-        
+
         Args:
             server_url (str): URL of the myGPT API server
+            config (myGPTConfig, optional): myGPT API credentials
         """
         self.server_url = server_url.rstrip('/')
+        self.config = config or myGPTConfig()
         self.session = requests.Session()
         self.session.headers.update({
             'Content-Type': 'application/json',
