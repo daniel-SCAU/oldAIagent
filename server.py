@@ -1,59 +1,216 @@
-import os
-from typing import List
-import httpx
-from fastapi import FastAPI, Depends, Header, HTTPException, status
-from pydantic import BaseModel
-from pydantic_settings import BaseSettings, SettingsConfigDict
+#!/usr/bin/env python3
+"""
+myGPT API Server - Python Version
+A Flask server that acts as a communication hub between Python scripts and the myGPT userscript.
+"""
 
-class Settings(BaseSettings):
-    API_KEY: str
-    LLM_ENDPOINT: str | None = None
-    LLM_API_KEY: str | None = None
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_file_encoding="utf-8")
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import logging
+from datetime import datetime
 
-settings = Settings()
-app = FastAPI(title="AI Suggestion Service", version="0.2.0")
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-async def require_api_key(x_api_key: str = Header(default="")):
-    if not settings.API_KEY or x_api_key != settings.API_KEY:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
-    return True
+# Create Flask app
+app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
-class SuggestionIn(BaseModel):
-    history: List[str]
-    prompt: str
+# Global variables
+stored_prompt = None
+response_history = []
 
-class SuggestionOut(BaseModel):
-    text: str
-    confidence: float
+@app.route('/send-prompt', methods=['POST'])
+def send_prompt():
+    """Receive a prompt from a Python script."""
+    global stored_prompt
+    
+    try:
+        data = request.get_json()
+        if not data or 'prompt' not in data:
+            return jsonify({'error': 'No prompt provided'}), 400
+        
+        prompt = data['prompt']
+        stored_prompt = prompt
+        
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        logger.info(f'Prompt received and stored [{timestamp}]: "{prompt}"')
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Prompt received',
+            'timestamp': timestamp
+        })
+        
+    except Exception as e:
+        logger.error(f'Error processing prompt: {str(e)}')
+        return jsonify({'error': 'Internal server error'}), 500
 
-class SuggestionBundle(BaseModel):
-    suggestions: List[SuggestionOut]
+@app.route('/get-prompt', methods=['GET'])
+def get_prompt():
+    """Send the stored prompt to the userscript and clear it."""
+    global stored_prompt
+    
+    prompt_to_send = stored_prompt
+    if prompt_to_send:
+        stored_prompt = None
+        logger.info(f'Prompt sent to userscript: "{prompt_to_send}"')
+    
+    return jsonify({'prompt': prompt_to_send})
 
-@app.get("/health")
-async def health():
-    return {"ok": True}
+@app.route('/process-response', methods=['POST'])
+def process_response():
+    """Receive the AI response from the userscript."""
+    global response_history
+    
+    try:
+        data = request.get_json()
+        if not data or 'response' not in data:
+            return jsonify({'error': 'No response provided'}), 400
+        
+        response = data['response']
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Store response in history
+        response_history.append({
+            'timestamp': timestamp,
+            'response': response
+        })
+        
+        # Keep only last 10 responses
+        if len(response_history) > 10:
+            response_history.pop(0)
+        
+        # Print the response
+        print('\n' + '='*60)
+        print(f'AI Response Received [{timestamp}]')
+        print('='*60)
+        print(response)
+        print('='*60)
+        
+        logger.info(f'AI response received and processed (length: {len(response)} chars)')
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Response received',
+            'timestamp': timestamp,
+            'response_length': len(response)
+        })
+        
+    except Exception as e:
+        logger.error(f'Error processing response: {str(e)}')
+        return jsonify({'error': 'Internal server error'}), 500
 
-@app.post("/suggestions", response_model=SuggestionBundle, dependencies=[Depends(require_api_key)])
-async def suggestions(body: SuggestionIn):
-    if not settings.LLM_ENDPOINT or not settings.LLM_API_KEY:
-        base = body.prompt.strip()
-        opts = [
-            SuggestionOut(text=base, confidence=0.55),
-            SuggestionOut(text=f"Thanks for the message. {base}", confidence=0.45),
-            SuggestionOut(text=f"I'll look into this and reply soon: {base}", confidence=0.35),
+@app.route('/test-response', methods=['POST'])
+def generate_test_response():
+    """Generate a test response for testing purposes (without userscript)."""
+    global stored_prompt, response_history
+    
+    try:
+        data = request.get_json()
+        if not data or 'prompt' not in data:
+            return jsonify({'error': 'No prompt provided'}), 400
+        
+        prompt = data['prompt']
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Generate a simple test response based on the prompt
+        if "meeting" in prompt.lower() or "confirm" in prompt.lower():
+            test_response = "Yes, the meeting is confirmed for 10 AM tomorrow. Looking forward to it!"
+        elif "proposal" in prompt.lower() or "think" in prompt.lower():
+            test_response = "I think it looks solid overall, but we might need to refine a couple of points before moving forward."
+        elif "hvornår" in prompt.lower() or "mødes" in prompt.lower():
+            test_response = "Hej! Vi kan mødes i morgen kl. 14:00. Hvad siger du til det?"
+        elif "summary" in prompt.lower() or "status" in prompt.lower():
+            test_response = "Based on the recent messages, here's a brief summary: Several questions were asked about meetings and proposals. All messages require responses."
+        else:
+            test_response = "Thank you for your message. I'll get back to you soon."
+        
+        # Store response in history
+        response_history.append({
+            'timestamp': timestamp,
+            'response': test_response
+        })
+        
+        # Keep only last 10 responses
+        if len(response_history) > 10:
+            response_history.pop(0)
+        
+        logger.info(f'Test response generated: {len(test_response)} chars')
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Test response generated',
+            'timestamp': timestamp,
+            'response': test_response,
+            'response_length': len(test_response)
+        })
+        
+    except Exception as e:
+        logger.error(f'Error generating test response: {str(e)}')
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/status', methods=['GET'])
+def get_status():
+    """Get server status and recent activity."""
+    return jsonify({
+        'status': 'running',
+        'timestamp': datetime.now().isoformat(),
+        'stored_prompt': stored_prompt is not None,
+        'response_count': len(response_history),
+        'recent_responses': [
+            {
+                'timestamp': r['timestamp'],
+                'length': len(r['response'])
+            }
+            for r in response_history[-5:]  # Last 5 responses
         ]
-        return SuggestionBundle(suggestions=opts)
+    })
 
-    headers = {"Authorization": f"Bearer {settings.LLM_API_KEY}"}
-    payload = {"messages": [
-        {"role": "system", "content": "Return two short, courteous reply options."},
-        {"role": "user", "content": "\n".join(body.history[-10:] + [body.prompt])}
-    ]}
-    async with httpx.AsyncClient(timeout=httpx.Timeout(10, connect=3)) as client:
-        r = await client.post(settings.LLM_ENDPOINT, headers=headers, json=payload)
-        r.raise_for_status()
-        data = r.json()
-    texts = [c.get("text", "") for c in data.get("choices", [])][:2] or [body.prompt]
-    out = [SuggestionOut(text=t, confidence=0.5 - i*0.1) for i, t in enumerate(texts)]
-    return SuggestionBundle(suggestions=out)
+@app.route('/history', methods=['GET'])
+def get_history():
+    """Get response history."""
+    return jsonify({
+        'total_responses': len(response_history),
+        'responses': response_history
+    })
+
+@app.route('/clear', methods=['POST'])
+def clear_data():
+    """Clear stored prompt and response history."""
+    global stored_prompt, response_history
+    
+    stored_prompt = None
+    response_history.clear()
+    
+    logger.info('Stored prompt and response history cleared')
+    return jsonify({
+        'status': 'success',
+        'message': 'Data cleared'
+    })
+
+if __name__ == '__main__':
+    print('='*60)
+    print('myGPT API Server - Python Version')
+    print('='*60)
+    print('Server starting on http://localhost:5000')
+    print('Available endpoints:')
+    print('  POST /send-prompt    - Send a prompt from Python')
+    print('  GET  /get-prompt     - Get prompt (userscript)')
+    print('  POST /process-response - Receive AI response (userscript)')
+    print('  POST /test-response  - Generate test response (for testing)')
+    print('  GET  /status         - Server status')
+    print('  GET  /history        - Response history')
+    print('  POST /clear          - Clear data')
+    print('='*60)
+    
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=False)
+    except KeyboardInterrupt:
+        print('\nServer stopped by user')
+    except Exception as e:
+        logger.error(f'Server error: {str(e)}')
