@@ -166,7 +166,7 @@ class TestFastAPIServer:
         mock_requests_post.return_value = mock_response
 
         # 2. Mock the embedding function since it also makes a network call
-        with patch('app.generate_embedding', return_value=[0.1, 0.2, 0.3]) as mock_embed:
+        with patch('app._embedding', return_value=[0.1, 0.2, 0.3]) as mock_embed:
             # 3. Call the endpoint that USES the mocked functions
             context_payload = {"text": "What is context retrieval?"}
             # Use 'params' for GET-style query parameters, 'json' for POST body
