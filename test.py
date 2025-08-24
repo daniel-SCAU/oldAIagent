@@ -110,8 +110,6 @@ class TestFlaskServer:
 
         # 4. Acknowledge the prompt (This endpoint only exists in the fixed server.py)
         ack_response = requests.post(f"{FLASK_SERVER_URL}/ack-prompt", headers=HEADERS)
-        if ack_response.status_code == 404:
-            pytest.skip("Skipping ack test: /ack-prompt not found. You may be running the original server.py.")
         assert ack_response.status_code == 200
         assert ack_response.json()['status'] == 'success'
 
