@@ -26,8 +26,11 @@ normalized content to the FastAPI `POST /messages` endpoint.
 |-------|---------|----------------------|
 | `ingestors/messenger.py` | Polls Facebook Messenger conversations via the Graph API. | `MESSENGER_PAGE_ID`, `MESSENGER_PAGE_TOKEN` |
 | `ingestors/whatsapp.py` | Handles WhatsApp Cloud API messages via webhooks or optional polling. | `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_TOKEN` |
+| `ingestors/outlook.py` | Reads emails via Microsoft Graph API. | `OUTLOOK_TOKEN`, `OUTLOOK_USER_ID` |
+| `ingestors/sms.py` | Fetches SMS messages from Twilio. | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` |
+| `ingestors/aula.py` | Example integration with Aula platform. | `AULA_API_URL`, `AULA_TOKEN` |
 
-Both modules require access to the FastAPI service:
+All modules require access to the FastAPI service:
 
 - `APP_API_URL` – base URL of the API (default `http://127.0.0.1:8000`).
 - `API_KEY` – API key expected by the FastAPI service.
