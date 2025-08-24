@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+asyncpg
+pydantic-settings
+python-dotenv
+tenacity
+httpx
+loguru
+pytest
+httpx[http2]
+alembic
