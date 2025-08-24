@@ -62,6 +62,20 @@ def get_prompt():
     
     return jsonify({'prompt': prompt_to_send})
 
+
+@app.route('/ack-prompt', methods=['POST'])
+def ack_prompt():
+    """Acknowledge the prompt and clear it if present."""
+    global stored_prompt
+
+    if stored_prompt is not None:
+        logger.info('Prompt acknowledged and cleared')
+    else:
+        logger.info('Ack called but no prompt stored')
+
+    stored_prompt = None
+    return jsonify({'status': 'success'})
+
 @app.route('/process-response', methods=['POST'])
 def process_response():
     """Receive the AI response from the userscript."""
@@ -201,6 +215,7 @@ if __name__ == '__main__':
     print('Available endpoints:')
     print('  POST /send-prompt    - Send a prompt from Python')
     print('  GET  /get-prompt     - Get prompt (userscript)')
+    print('  POST /ack-prompt     - Acknowledge prompt')
     print('  POST /process-response - Receive AI response (userscript)')
     print('  POST /test-response  - Generate test response (for testing)')
     print('  GET  /status         - Server status')
