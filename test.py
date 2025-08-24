@@ -8,8 +8,8 @@ from unittest.mock import patch
 # --- Configuration ---
 FLASK_SERVER_URL = "http://localhost:5000"
 FASTAPI_SERVER_URL = "http://localhost:8000"
-# This API key must match the one in your fixed server.py
-API_KEY = "your-secret-api-key"
+# The FastAPI app expects this development key by default.
+API_KEY = "dev-api-key"
 HEADERS = {"X-API-KEY": API_KEY}
 
 # --- Helper function to wait for servers ---
