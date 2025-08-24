@@ -74,6 +74,31 @@ The FastAPI service now runs a background scheduler powered by
 Create summarization tasks with the new CRUD endpoints under `/tasks`
 and the scheduler will fill in the `summary` field once processed.
 
+## Follow-up Task Detection
+
+Incoming messages sent to `POST /messages` are now scanned for follow-up
+phrases such as "please", "can you" or "todo". Detected tasks are stored
+in a dedicated `followup_tasks` table with a default `pending` status so
+they can be reviewed or acted on later.
+
+## Reply Suggestions
+
+Generate proposed replies for any conversation with the new
+`POST /suggestions` endpoint. The service gathers the conversation
+history, forwards it to the configured myGPT service and returns a list
+of reply suggestions.
+
+Example:
+
+```bash
+curl -X POST http://localhost:8000/suggestions \
+  -H "X-API-Key: $API_KEY" \
+  -d '{"conversation_id": "123"}'
+```
+
+Optional environment variables `MYGPT_API_URL` and `MYGPT_API_KEY` may be
+set to point at a running myGPT instance.
+
 ### Configuration
 
 APScheduler runs with in-memory settings and requires no additional
@@ -88,6 +113,3 @@ The FastAPI service requires a simple header-based API key. For development
 and automated tests, use the canonical key `dev-api-key` by including it in the
 `X-API-KEY` header of each request. The server can be configured to expect a
 different key by setting the `API_KEY` environment variable before startup.
-
-#>>>>>>> main
-#>>>>>>> main
