@@ -35,15 +35,33 @@ logging.basicConfig(
 log = logging.getLogger("api")
 
 # ------------- DB pool ------------------
-try:
-    pool = psycopg2.pool.SimpleConnectionPool(minconn=1, maxconn=10, **DB_CONFIG)
-    log.info("DB pool ready")
-except Exception:
-    log.exception("DB pool init failed")
-    raise
+pool: Optional[psycopg2.pool.SimpleConnectionPool] = None
+
+
+def init_db_pool() -> None:
+    """Initialize the global DB connection pool.
+
+    If the database is unavailable, the application will continue running
+    without a pool and database-dependent endpoints will return an error
+    when accessed.
+    """
+    global pool
+    try:
+        pool = psycopg2.pool.SimpleConnectionPool(minconn=1, maxconn=10, **DB_CONFIG)
+        log.info("DB pool ready")
+    except Exception as e:
+        pool = None
+        log.error("DB pool init failed: %s", e)
+
+
+@app.on_event("startup")
+def startup_db_pool() -> None:
+    init_db_pool()
 
 @contextmanager
 def db() -> psycopg2.extensions.connection:
+    if pool is None:
+        raise HTTPException(status_code=503, detail="Database unavailable")
     conn = None
     try:
         conn = pool.getconn()
