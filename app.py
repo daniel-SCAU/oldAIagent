@@ -10,6 +10,8 @@ import requests
 from fastapi import FastAPI, HTTPException, Header, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 # ---------------- Config ----------------
 DEBUG = os.getenv("DEBUG", "1") == "1"
@@ -34,8 +36,22 @@ logging.basicConfig(
 )
 log = logging.getLogger("api")
 
+# ------------- App ----------------------
+app = FastAPI(
+    title="AI Message Monitoring API",
+    version="0.2.0",
+    description="Stores and searches messages across platforms.",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
+)
+
 # ------------- DB pool ------------------
 pool: Optional[psycopg2.pool.SimpleConnectionPool] = None
+scheduler = BackgroundScheduler()
 
 
 def init_db_pool() -> None:
@@ -54,9 +70,48 @@ def init_db_pool() -> None:
         log.error("DB pool init failed: %s", e)
 
 
+def init_db_schema() -> None:
+    """Ensure required tables and columns exist."""
+    if pool is None:
+        return
+    with db() as conn, conn.cursor() as cur:
+        # add category column to Chat
+        cur.execute("""
+            ALTER TABLE IF EXISTS Chat
+            ADD COLUMN IF NOT EXISTS category TEXT
+        """)
+        # create summary_tasks table
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS summary_tasks (
+                id SERIAL PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                summary TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """
+        )
+
+
 @app.on_event("startup")
-def startup_db_pool() -> None:
+def startup() -> None:
     init_db_pool()
+    init_db_schema()
+    try:
+        scheduler.start()
+        scheduler.add_job(process_new_messages, IntervalTrigger(seconds=30))
+        scheduler.add_job(process_summary_tasks, IntervalTrigger(seconds=60))
+    except Exception as e:
+        log.error("Scheduler start failed: %s", e)
+
+
+@app.on_event("shutdown")
+def shutdown() -> None:
+    try:
+        scheduler.shutdown(wait=False)
+    except Exception:
+        pass
 
 @contextmanager
 def db() -> psycopg2.extensions.connection:
@@ -103,18 +158,64 @@ class MessageRow(BaseModel):
     message_type: Optional[str] = None
     thread_key: Optional[str] = None
 
-# ------------- App ----------------------
-app = FastAPI(
-    title="AI Message Monitoring API",
-    version="0.2.0",
-    description="Stores and searches messages across platforms."
-)
+class TaskCreate(BaseModel):
+    conversation_id: str
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
-)
+class TaskRow(BaseModel):
+    id: int
+    conversation_id: str
+    status: str
+    summary: Optional[str]
+    created_at: datetime
+
+# --------- Utilities ---------
+def categorize_message(text: str) -> str:
+    return "question" if "?" in (text or "") else "statement"
+
+
+def summarize_messages(messages: List[str]) -> str:
+    if not messages:
+        return ""
+    if len(messages) == 1:
+        return messages[0]
+    return f"{messages[0]} ... {messages[-1]}"
+
+
+def summarize_conversation(conversation_id: str) -> str:
+    sql = """
+        SELECT message FROM Chat
+        WHERE conversation_id = %s
+        ORDER BY created_at ASC
+    """
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(sql, (conversation_id,))
+        rows = cur.fetchall()
+    msgs = [r[0] for r in rows if r and r[0]]
+    return summarize_messages(msgs)
+
+
+def process_new_messages() -> None:
+    """Assign categories to uncategorized messages."""
+    sql_select = "SELECT id, message FROM Chat WHERE category IS NULL LIMIT 50"
+    sql_update = "UPDATE Chat SET category=%s WHERE id=%s"
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(sql_select)
+        rows = cur.fetchall()
+        for mid, msg in rows:
+            cat = categorize_message(msg or "")
+            cur.execute(sql_update, (cat, mid))
+
+
+def process_summary_tasks() -> None:
+    """Process pending summary tasks."""
+    sql_pending = "SELECT id, conversation_id FROM summary_tasks WHERE status = 'pending'"
+    sql_update = "UPDATE summary_tasks SET summary=%s, status='completed' WHERE id=%s"
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(sql_pending)
+        tasks = cur.fetchall()
+        for tid, cid in tasks:
+            summary = summarize_conversation(cid)
+            cur.execute(sql_update, (summary, tid))
 
 # ------------- Endpoints ----------------
 @app.get("/health")
@@ -202,6 +303,79 @@ def list_conversation_messages(conversation_id: str, limit: int = Query(200, ge=
                 "thread_key": r[8],
             })
         return out
+
+
+# --------- Task Endpoints ---------
+@app.post("/tasks", response_model=TaskRow, dependencies=[Depends(require_api_key)])
+def create_task(task: TaskCreate):
+    sql = """
+        INSERT INTO summary_tasks (conversation_id)
+        VALUES (%s)
+        RETURNING id, conversation_id, status, summary, created_at
+    """
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(sql, (task.conversation_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=500, detail="Insert failed")
+        return {
+            "id": row[0],
+            "conversation_id": row[1],
+            "status": row[2],
+            "summary": row[3],
+            "created_at": row[4],
+        }
+
+
+@app.get("/tasks", response_model=List[TaskRow], dependencies=[Depends(require_api_key)])
+def list_tasks():
+    sql = """
+        SELECT id, conversation_id, status, summary, created_at
+        FROM summary_tasks
+        ORDER BY created_at DESC
+    """
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(sql)
+        rows = cur.fetchall()
+        return [
+            {
+                "id": r[0],
+                "conversation_id": r[1],
+                "status": r[2],
+                "summary": r[3],
+                "created_at": r[4],
+            }
+            for r in rows
+        ]
+
+
+@app.get("/tasks/{task_id}", response_model=TaskRow, dependencies=[Depends(require_api_key)])
+def get_task(task_id: int):
+    sql = """
+        SELECT id, conversation_id, status, summary, created_at
+        FROM summary_tasks
+        WHERE id = %s
+    """
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(sql, (task_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return {
+            "id": row[0],
+            "conversation_id": row[1],
+            "status": row[2],
+            "summary": row[3],
+            "created_at": row[4],
+        }
+
+
+@app.delete("/tasks/{task_id}", dependencies=[Depends(require_api_key)])
+def delete_task(task_id: int):
+    sql = "DELETE FROM summary_tasks WHERE id = %s"
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(sql, (task_id,))
+    return {"ok": True}
 
 # ---------- Optional: context RPC (kept) ----------
 def _embedding(text: str):
