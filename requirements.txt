@@ -1,6 +1,5 @@
 fastapi
 uvicorn[standard]
-asyncpg
 pydantic-settings
 python-dotenv
 tenacity
@@ -9,3 +8,7 @@ loguru
 pytest
 httpx[http2]
 alembic
+Flask
+flask-cors
+requests
+psycopg2-binary
