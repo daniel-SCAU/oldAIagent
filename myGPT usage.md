@@ -70,6 +70,7 @@ else:
 |--------|----------|-------------|
 | `POST` | `/send-prompt` | Send a prompt from Python |
 | `GET` | `/get-prompt` | Get prompt (userscript) |
+| `POST` | `/ack-prompt` | Acknowledge prompt (clears stored prompt) |
 | `POST` | `/process-response` | Receive AI response (userscript) |
 | `GET` | `/status` | Server status |
 | `GET` | `/history` | Response history |
