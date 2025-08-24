@@ -8,7 +8,6 @@ from unittest.mock import patch
 # --- Configuration ---
 FLASK_SERVER_URL = "http://localhost:5000"
 FASTAPI_SERVER_URL = "http://localhost:8000"
-# The FastAPI app expects this development key by default.
 API_KEY = "dev-api-key"
 HEADERS = {"X-API-KEY": API_KEY}
 
@@ -50,9 +49,12 @@ def manage_servers():
         # Start servers and redirect their output to devnull to keep test output clean
         devnull = open(os.devnull, 'w')
         flask_process = subprocess.Popen(["python", "server.py"], stdout=devnull, stderr=devnull)
+        # Ensure FastAPI uses the same API key as the tests
+        env = os.environ.copy()
+        env["API_KEY"] = API_KEY
         fastapi_process = subprocess.Popen(
             ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"],
-            stdout=devnull, stderr=devnull
+            stdout=devnull, stderr=devnull, env=env
         )
 
         # Wait for both servers to be responsive
@@ -162,7 +164,8 @@ class TestFastAPIServer:
         conversation_id = stored_info['conversation_id']
 
         history_response = requests.get(
-            f"{FASTAPI_SERVER_URL}/conversations/{conversation_id}/messages?limit=5",
+
+            f"{FASTAPI_SERVER_URL}/conversations/{conversation_id}?sender=user123&limit=5",
             headers=HEADERS,
         )
         assert history_response.status_code == 200
