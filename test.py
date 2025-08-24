@@ -23,9 +23,8 @@ def wait_for_server(url, timeout=10):
         try:
             # For Flask, we can use /status. For FastAPI, we use the docs endpoint.
             test_url = f"{url}/status" if "5000" in url else f"{url}/docs"
-            # For the Flask server, we need headers for the status check
-            headers = HEADERS if "5000" in url else None
-            response = requests.get(test_url, headers=headers, timeout=1)
+            # Both servers require headers for the status check
+            response = requests.get(test_url, headers=HEADERS, timeout=1)
             if response.status_code == 200:
                 print(f"Server at {url} is up!")
                 return True
@@ -141,12 +140,17 @@ class TestFastAPIServer:
             "message": "Hello, this is the first message.",
             "app": "TestApp"
         }
-        store_response = requests.post(f"{FASTAPI_SERVER_URL}/messages", json=message_payload)
+        store_response = requests.post(
+            f"{FASTAPI_SERVER_URL}/messages", json=message_payload, headers=HEADERS
+        )
         assert store_response.status_code == 200
         stored_info = store_response.json()
         conversation_id = stored_info['conversation_id']
 
-        history_response = requests.get(f"{FASTAPI_SERVER_URL}/conversations/{conversation_id}?sender=user123&limit=5")
+        history_response = requests.get(
+            f"{FASTAPI_SERVER_URL}/conversations/{conversation_id}/messages?limit=5",
+            headers=HEADERS,
+        )
         assert history_response.status_code == 200
         history_data = history_response.json()
         assert len(history_data) >= 1
@@ -170,7 +174,9 @@ class TestFastAPIServer:
             # 3. Call the endpoint that USES the mocked functions
             context_payload = {"text": "What is context retrieval?"}
             # Use 'params' for GET-style query parameters, 'json' for POST body
-            response = requests.post(f"{FASTAPI_SERVER_URL}/context", params=context_payload)
+            response = requests.post(
+                f"{FASTAPI_SERVER_URL}/context", params=context_payload, headers=HEADERS
+            )
 
             # 4. Assertions
             assert response.status_code == 200
