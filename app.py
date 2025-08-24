@@ -34,6 +34,19 @@ logging.basicConfig(
 )
 log = logging.getLogger("api")
 
+# Instantiate FastAPI app early so decorators can reference it
+app = FastAPI(
+    title="AI Message Monitoring API",
+    version="0.2.0",
+    description="Stores and searches messages across platforms.",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
+)
+
 # ------------- DB pool ------------------
 pool: Optional[psycopg2.pool.SimpleConnectionPool] = None
 
@@ -102,19 +115,6 @@ class MessageRow(BaseModel):
     contact_id: Optional[str] = None
     message_type: Optional[str] = None
     thread_key: Optional[str] = None
-
-# ------------- App ----------------------
-app = FastAPI(
-    title="AI Message Monitoring API",
-    version="0.2.0",
-    description="Stores and searches messages across platforms."
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
-)
 
 # ------------- Endpoints ----------------
 @app.get("/health")

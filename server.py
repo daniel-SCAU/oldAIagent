@@ -8,6 +8,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import logging
 from datetime import datetime
+import os
 
 # Configure logging
 logging.basicConfig(
@@ -19,6 +20,16 @@ logger = logging.getLogger(__name__)
 # Create Flask app
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
+
+# Read API key from environment
+API_KEY = os.getenv("API_KEY")
+
+
+@app.before_request
+def check_api_key():
+    """Validate the X-API-KEY header before handling requests."""
+    if request.headers.get("X-API-KEY") != API_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
 
 # Global variables
 stored_prompt = None
