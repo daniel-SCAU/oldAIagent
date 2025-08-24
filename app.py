@@ -76,7 +76,7 @@ class MessageOut(BaseModel):
 
 class MessageRow(BaseModel):
     id: int
-    conversation_id: str
+    conversation_id: Optional[str]
     sender: Optional[str]
     app: Optional[str]
     message: Optional[str]
