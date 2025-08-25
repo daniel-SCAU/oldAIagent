@@ -419,15 +419,24 @@ def process_new_messages() -> None:
     sql_update = (
         "UPDATE Chat SET intent=%s, sentiment=%s, category=%s WHERE id=%s"
     )
-    with db() as conn, conn.cursor() as cur:
-        cur.execute(sql_select)
-        rows = cur.fetchall()
-        for mid, msg in rows:
-            meta = categorize_message(msg or "")
-            cur.execute(
-                sql_update,
-                (meta["intent"], meta["sentiment"], meta["intent"], mid),
-            )
+
+    sql_update = "UPDATE Chat SET intent=%s, sentiment=%s, category=%s WHERE id=%s"
+    try:
+        with db() as conn, conn.cursor() as cur:
+            cur.execute(sql_select)
+            rows = cur.fetchall()
+            for mid, msg in rows:
+                meta = categorize_message(msg or "")
+                cur.execute(
+                    sql_update,
+                    (meta["intent"], meta["sentiment"], meta["intent"], mid),
+                )
+    except HTTPException as e:
+        if e.status_code == 503:
+            log.warning("process_new_messages skipped: database unavailable")
+            return
+        raise
+
 
 
 def process_summary_tasks() -> None:
@@ -435,16 +444,27 @@ def process_summary_tasks() -> None:
     sql_pending = "SELECT id, conversation_id FROM summary_tasks WHERE status = 'pending'"
     sql_update = "UPDATE summary_tasks SET summary=%s, status='completed' WHERE id=%s"
     sql_fail = "UPDATE summary_tasks SET status='failed' WHERE id=%s"
-    with db() as conn, conn.cursor() as cur:
-        cur.execute(sql_pending)
-        tasks = cur.fetchall()
-        for tid, cid in tasks:
-            try:
-                summary = summarize_conversation(cid)
-                cur.execute(sql_update, (summary, tid))
-            except Exception as e:
-                log.error("Failed to summarize %s: %s", cid, e)
-                cur.execute(sql_fail, (tid,))
+    try:
+        with db() as conn, conn.cursor() as cur:
+            cur.execute(sql_pending)
+            tasks = cur.fetchall()
+            for tid, cid in tasks:
+                try:
+                    summary = summarize_conversation(cid)
+                    cur.execute(sql_update, (summary, tid))
+                except HTTPException as e:
+                    if e.status_code == 503:
+                        raise
+                    log.error("Failed to summarize %s: %s", cid, e)
+                    cur.execute(sql_fail, (tid,))
+                except Exception as e:
+                    log.error("Failed to summarize %s: %s", cid, e)
+                    cur.execute(sql_fail, (tid,))
+    except HTTPException as e:
+        if e.status_code == 503:
+            log.warning("process_summary_tasks skipped: database unavailable")
+            return
+        raise
 
 # ------------- Endpoints ----------------
 @app.get("/health")
