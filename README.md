@@ -130,3 +130,17 @@ The FastAPI service requires a simple header-based API key. For development
 and automated tests, use the canonical key `dev-api-key` by including it in the
 `X-API-KEY` header of each request. The server can be configured to expect a
 different key by setting the `API_KEY` environment variable before startup.
+
+## Contact Management
+
+Use the `/contacts` endpoints to keep track of people and link messages to
+their IDs:
+
+- `POST /contacts` – create a contact with a name and optional JSON `info`.
+- `GET /contacts` – list all contacts.
+- `GET /contacts/{id}` – retrieve a single contact.
+- `PUT /contacts/{id}` – update an existing contact.
+- `DELETE /contacts/{id}` – remove a contact.
+
+When ingesting messages the ingestor modules will automatically attach a
+`contact_id` if the sender matches a stored contact name.
