@@ -95,57 +95,10 @@ def run_migrations() -> None:
         log.error("Migration failed: %s", e)
 
 
-def init_db_schema() -> None:
-    """Ensure required tables and columns exist."""
-    if pool is None:
-        return
-    with db() as conn, conn.cursor() as cur:
-        # add category column to Chat
-        cur.execute("""
-            ALTER TABLE IF EXISTS Chat
-            ADD COLUMN IF NOT EXISTS category TEXT
-        """)
-        # create summary_tasks table
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS summary_tasks (
-                id SERIAL PRIMARY KEY,
-                conversation_id TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                summary TEXT,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-            """
-        )
-        # create followup_tasks table
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS followup_tasks (
-                id SERIAL PRIMARY KEY,
-                conversation_id TEXT NOT NULL,
-                task TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-            """
-        )
-        # create contacts table
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS contacts (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                info JSONB
-            )
-            """
-        )
-
-
 @app.on_event("startup")
 def startup() -> None:
     init_db_pool()
     run_migrations()
-    init_db_schema()
     try:
         scheduler.start()
         scheduler.add_job(process_new_messages, IntervalTrigger(seconds=30))

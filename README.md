@@ -107,6 +107,23 @@ environment variables `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` and
 `DB_NAME`. An API key is expected in the `x-api-key` header; override the
 default using the `API_KEY` environment variable.
 
+## Database Migrations
+
+Alembic manages schema changes. Apply pending migrations with:
+
+```bash
+alembic upgrade head
+```
+
+To create a new migration after modifying the schema:
+
+```bash
+alembic revision -m "description of change"
+```
+
+The FastAPI service automatically runs `alembic upgrade head` on startup
+to ensure the database is up to date.
+
 ## API Key
 
 The FastAPI service requires a simple header-based API key. For development
