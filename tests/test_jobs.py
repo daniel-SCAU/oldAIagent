@@ -95,7 +95,9 @@ def fake_db(data):
 def test_process_new_messages(monkeypatch):
     data = {"Chat": [
         {"id": 1, "message": "Can you help me?", "intent": None, "sentiment": None},
-        {"id": 2, "message": "I hate bugs", "intent": None, "sentiment": None},
+        {"id": 2, "message": "I hate bugs", "intent": None, "sentiment": "negative"},
+        {"id": 3, "message": "Great job!", "intent": "statement", "sentiment": None},
+        {"id": 4, "message": "All good", "intent": "statement", "sentiment": "positive"},
     ]}
 
     class ClassifyCursor:
@@ -105,7 +107,9 @@ def test_process_new_messages(monkeypatch):
 
         def execute(self, sql, params=None):
             sql = sql.strip().lower()
-            if sql.startswith("select id, message from chat where intent is null"):
+            if sql.startswith(
+                "select id, message from chat where intent is null or sentiment is null"
+            ):
                 self.result = [
                     (m["id"], m["message"])
                     for m in self.data["Chat"]
@@ -147,8 +151,18 @@ def test_process_new_messages(monkeypatch):
 
     monkeypatch.setattr(app, "db", lambda: fake_db_local(data))
     app.process_new_messages()
+    # First row: both nulls originally
     assert data["Chat"][0]["intent"] == "question"
+    assert data["Chat"][0]["sentiment"] == "neutral"
+    # Second row: only intent missing
+    assert data["Chat"][1]["intent"] == "statement"
     assert data["Chat"][1]["sentiment"] == "negative"
+    # Third row: only sentiment missing
+    assert data["Chat"][2]["intent"] == "statement"
+    assert data["Chat"][2]["sentiment"] == "positive"
+    # Fourth row: already had both fields, should remain unchanged
+    assert data["Chat"][3]["intent"] == "statement"
+    assert data["Chat"][3]["sentiment"] == "positive"
 
 
 def test_process_summary_tasks(monkeypatch):
