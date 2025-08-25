@@ -106,7 +106,23 @@ def init_db_schema() -> None:
             ALTER TABLE IF EXISTS Chat
             ADD COLUMN IF NOT EXISTS category TEXT,
             ADD COLUMN IF NOT EXISTS intent TEXT,
-            ADD COLUMN IF NOT EXISTS sentiment TEXT
+            ADD COLUMN IF NOT EXISTS sentiment TEXT,
+            ADD COLUMN IF NOT EXISTS search_vector TSVECTOR
+            """
+        )
+        # index for full text search
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS chat_search_vector_idx
+            ON Chat USING GIN (search_vector)
+            """
+        )
+        # populate search_vector for existing rows
+        cur.execute(
+            """
+            UPDATE Chat
+            SET search_vector = to_tsvector('english', message)
+            WHERE search_vector IS NULL
             """
         )
         # create summary_tasks table
@@ -322,41 +338,88 @@ def detect_followup_tasks(text: str) -> List[str]:
     return tasks
 
 
-def summarize_messages(messages: List[str]) -> str:
+def summarize_messages(messages: List[Any]) -> str:
+    """Use myGPT to summarize a conversation history.
+
+    The entire conversation history is included in the prompt to produce a
+    coherent summary.  Each message can be either a plain string or a mapping
+    with ``sender`` and ``message`` keys.  Any exception raised by the API call
+    will bubble up to the caller so it can decide how to handle failures.
+    """
+
     if not messages:
         return ""
-    prompt = "Summarize the following conversation:\n" + "\n".join(messages)
-    try:
-        api = myGPTAPI()
-        result = api.generate_test_response(prompt)
-        summary = result.get("response") or result.get("summary") or result.get("answer")
-        if summary:
-            return summary.strip()
-    except Exception as e:
-        log.error("Summary generation failed: %s", e)
-    if len(messages) == 1:
-        return messages[0]
-    return f"{messages[0]} ... {messages[-1]}"
+
+    lines: List[str] = [
+        "You are an AI assistant tasked with summarizing conversations.",
+        "Focus on key points, decisions and action items.",
+        "Conversation:",
+    ]
+
+    for item in messages:
+        if isinstance(item, dict):
+            sender = item.get("sender")
+            text = item.get("message", "")
+            if sender:
+                lines.append(f"{sender}: {text}")
+            else:
+                lines.append(text)
+        else:
+            lines.append(str(item))
+
+    prompt = "\n".join(lines)
+    api = myGPTAPI()
+    result = api.generate_test_response(prompt)
+    summary = result.get("response") or result.get("summary") or result.get("answer")
+    if summary:
+        return summary.strip()
+    raise ValueError("No summary returned from myGPT API")
 
 
 def summarize_conversation(conversation_id: str) -> str:
+    """Fetch a conversation and return an AI generated summary.
+
+    If the myGPT API call fails for any reason a simple fallback summary using
+    the first and last messages is returned instead of raising an exception.
+    """
+
     sql = """
-        SELECT message FROM Chat
+        SELECT sender, message FROM Chat
         WHERE conversation_id = %s
         ORDER BY created_at ASC
     """
     with db() as conn, conn.cursor() as cur:
         cur.execute(sql, (conversation_id,))
         rows = cur.fetchall()
-    msgs = [r[0] for r in rows if r and r[0]]
-    return summarize_messages(msgs)
+    msgs = [
+        {"sender": r[0], "message": r[1]}
+        for r in rows
+        if r and r[1]
+    ]
+
+    try:
+        return summarize_messages(msgs)
+    except Exception as e:
+        log.error("Summary generation failed: %s", e)
+        texts = [m["message"] for m in msgs if m.get("message")]
+        if not texts:
+            return ""
+        if len(texts) == 1:
+            return texts[0]
+        return f"{texts[0]} ... {texts[-1]}"
 
 
 def process_new_messages() -> None:
-    """Assign categories to uncategorized messages."""
+    """Assign intent and sentiment to messages lacking classification."""
     sql_select = (
-        "SELECT id, message FROM Chat WHERE intent IS NULL OR sentiment IS NULL LIMIT 50"
+        "SELECT id, message FROM Chat "
+        "WHERE intent IS NULL OR sentiment IS NULL "
+        "LIMIT 50"
     )
+    sql_update = (
+        "UPDATE Chat SET intent=%s, sentiment=%s, category=%s WHERE id=%s"
+    )
+
     sql_update = "UPDATE Chat SET intent=%s, sentiment=%s, category=%s WHERE id=%s"
     try:
         with db() as conn, conn.cursor() as cur:
@@ -373,6 +436,7 @@ def process_new_messages() -> None:
             log.warning("process_new_messages skipped: database unavailable")
             return
         raise
+
 
 
 def process_summary_tasks() -> None:
@@ -495,7 +559,16 @@ def generate_suggestions(req: SuggestionIn):
 
 @app.get("/search", response_model=List[MessageRow], dependencies=[Depends(require_api_key)])
 def search_messages(q: str = Query(..., min_length=1), limit: int = Query(50, ge=1, le=500)):
-    sql = """
+    ts_query = " & ".join(q.strip().split())
+    sql_ts = """
+        SELECT id, conversation_id, sender, app, message, created_at,
+               contact_id, message_type, thread_key
+        FROM Chat
+        WHERE search_vector @@ to_tsquery('english', %s)
+        ORDER BY created_at DESC
+        LIMIT %s
+    """
+    sql_ilike = """
         SELECT id, conversation_id, sender, app, message, created_at,
                contact_id, message_type, thread_key
         FROM Chat
@@ -504,7 +577,20 @@ def search_messages(q: str = Query(..., min_length=1), limit: int = Query(50, ge
         LIMIT %s
     """
     with db() as conn, conn.cursor() as cur:
-        cur.execute(sql, (f"%{q}%", limit))
+        # check if search_vector column exists
+        cur.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='chat' AND column_name='search_vector'
+            )
+            """
+        )
+        has_sv = cur.fetchone()[0]
+        if has_sv:
+            cur.execute(sql_ts, (ts_query, limit))
+        else:
+            cur.execute(sql_ilike, (f"%{q}%", limit))
         rows = cur.fetchall()
         out = []
         for r in rows:
