@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 def _forward(msg: Dict[str, Any]) -> None:
     """Send a normalized Aula message to the FastAPI service."""
     headers = {"X-API-KEY": API_KEY}
-    url = f"{API_BASE}/messages"
+    url = f"{API_BASE}/webhook"
     try:
         requests.post(url, json=msg, headers=headers, timeout=10).raise_for_status()
     except Exception as exc:

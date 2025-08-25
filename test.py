@@ -157,7 +157,7 @@ class TestFastAPIServer:
             "app": "TestApp"
         }
         store_response = requests.post(
-            f"{FASTAPI_SERVER_URL}/messages", json=message_payload, headers=HEADERS
+            f"{FASTAPI_SERVER_URL}/webhook", json=message_payload, headers=HEADERS
         )
         assert store_response.status_code == 200
         stored_info = store_response.json()

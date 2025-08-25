@@ -95,6 +95,56 @@ def run_migrations() -> None:
         log.error("Migration failed: %s", e)
 
 
+def init_db_schema() -> None:
+    """Ensure required tables and columns exist."""
+    if pool is None:
+        return
+    with db() as conn, conn.cursor() as cur:
+        # add classification columns to Chat
+        cur.execute(
+            """
+            ALTER TABLE IF EXISTS Chat
+            ADD COLUMN IF NOT EXISTS category TEXT,
+            ADD COLUMN IF NOT EXISTS intent TEXT,
+            ADD COLUMN IF NOT EXISTS sentiment TEXT
+            """
+        )
+        # create summary_tasks table
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS summary_tasks (
+                id SERIAL PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                summary TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """
+        )
+        # create followup_tasks table
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS followup_tasks (
+                id SERIAL PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                task TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """
+        )
+        # create contacts table
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS contacts (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                info JSONB
+            )
+            """
+        )
+
+
 @app.on_event("startup")
 def startup() -> None:
     init_db_pool()
@@ -191,8 +241,65 @@ class SuggestionOut(BaseModel):
     suggestions: List[str]
 
 # --------- Utilities ---------
-def categorize_message(text: str) -> str:
-    return "question" if "?" in (text or "") else "statement"
+def categorize_message(text: str) -> Dict[str, str]:
+    """Determine intent and sentiment for a message.
+
+    Attempts to use a configured myGPT instance if available. The model is
+    prompted to return a JSON object with ``intent`` (``question``, ``task`` or
+    ``statement``) and ``sentiment`` (``positive``, ``negative`` or ``neutral``).
+    If the model call fails or is not configured, a simple heuristic fallback is
+    used instead.
+    """
+
+    api_url = os.getenv("MYGPT_API_URL")
+    api_key = os.getenv("MYGPT_API_KEY")
+    if api_url and api_key:
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        prompt = (
+            "Classify the following message. Respond with JSON containing keys "
+            "'intent' (question/task/statement) and 'sentiment' (positive/negative/neutral).\n"
+            f"Message: {text}"
+        )
+        try:
+            resp = requests.post(api_url, headers=headers, json={"prompt": prompt}, timeout=20)
+            resp.raise_for_status()
+            data = resp.json()
+            # Some myGPT deployments may return the JSON directly or embed it in 'response'
+            if isinstance(data, dict) and "intent" in data:
+                intent = data.get("intent")
+                sentiment = data.get("sentiment")
+            else:
+                resp_text = data.get("response") or data.get("answer")
+                intent = sentiment = None
+                if resp_text:
+                    try:
+                        parsed = json.loads(resp_text)
+                        intent = parsed.get("intent")
+                        sentiment = parsed.get("sentiment")
+                    except Exception:
+                        pass
+            if intent and sentiment:
+                return {"intent": intent, "sentiment": sentiment}
+        except Exception as e:
+            log.error("categorize_message myGPT failed: %s", e)
+
+    text = text or ""
+    lower = text.lower()
+    intent = "statement"
+    if "?" in text:
+        intent = "question"
+    elif any(k in lower for k in ["please", "can you", "could you", "todo", "kindly", "follow up"]):
+        intent = "task"
+
+    sentiment = "neutral"
+    positive_words = ["good", "great", "love", "like", "excellent", "happy", "awesome", "fantastic"]
+    negative_words = ["bad", "terrible", "hate", "dislike", "awful", "sad", "angry"]
+    if any(w in lower for w in positive_words):
+        sentiment = "positive"
+    elif any(w in lower for w in negative_words):
+        sentiment = "negative"
+
+    return {"intent": intent, "sentiment": sentiment}
 
 
 def detect_followup_tasks(text: str) -> List[str]:
@@ -218,23 +325,15 @@ def detect_followup_tasks(text: str) -> List[str]:
 def summarize_messages(messages: List[str]) -> str:
     if not messages:
         return ""
-    api_url = os.getenv("MYGPT_API_URL")
-    api_key = os.getenv("MYGPT_API_KEY")
-    if api_url and api_key:
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        prompt = "Summarize the following conversation:\n" + "\n".join(messages)
-        try:
-            resp = requests.post(api_url, headers=headers, json={"prompt": prompt}, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-            summary = data.get("response") or data.get("answer")
-            if summary:
-                return summary
-        except Exception as e:
-            log.error("Summary generation failed: %s", e)
+    prompt = "Summarize the following conversation:\n" + "\n".join(messages)
+    try:
+        api = myGPTAPI()
+        result = api.generate_test_response(prompt)
+        summary = result.get("response") or result.get("summary") or result.get("answer")
+        if summary:
+            return summary.strip()
+    except Exception as e:
+        log.error("Summary generation failed: %s", e)
     if len(messages) == 1:
         return messages[0]
     return f"{messages[0]} ... {messages[-1]}"
@@ -255,26 +354,33 @@ def summarize_conversation(conversation_id: str) -> str:
 
 def process_new_messages() -> None:
     """Assign categories to uncategorized messages."""
-    sql_select = "SELECT id, message FROM Chat WHERE category IS NULL LIMIT 50"
-    sql_update = "UPDATE Chat SET category=%s WHERE id=%s"
+    sql_select = (
+        "SELECT id, message FROM Chat WHERE intent IS NULL OR sentiment IS NULL LIMIT 50"
+    )
+    sql_update = "UPDATE Chat SET intent=%s, sentiment=%s, category=%s WHERE id=%s"
     with db() as conn, conn.cursor() as cur:
         cur.execute(sql_select)
         rows = cur.fetchall()
         for mid, msg in rows:
-            cat = categorize_message(msg or "")
-            cur.execute(sql_update, (cat, mid))
+            meta = categorize_message(msg or "")
+            cur.execute(sql_update, (meta["intent"], meta["sentiment"], meta["intent"], mid))
 
 
 def process_summary_tasks() -> None:
     """Process pending summary tasks."""
     sql_pending = "SELECT id, conversation_id FROM summary_tasks WHERE status = 'pending'"
     sql_update = "UPDATE summary_tasks SET summary=%s, status='completed' WHERE id=%s"
+    sql_fail = "UPDATE summary_tasks SET status='failed' WHERE id=%s"
     with db() as conn, conn.cursor() as cur:
         cur.execute(sql_pending)
         tasks = cur.fetchall()
         for tid, cid in tasks:
-            summary = summarize_conversation(cid)
-            cur.execute(sql_update, (summary, tid))
+            try:
+                summary = summarize_conversation(cid)
+                cur.execute(sql_update, (summary, tid))
+            except Exception as e:
+                log.error("Failed to summarize %s: %s", cid, e)
+                cur.execute(sql_fail, (tid,))
 
 # ------------- Endpoints ----------------
 @app.get("/health")
@@ -337,7 +443,7 @@ def create_message(msg: MessageIn):
 
 @app.post("/webhook", response_model=MessageOut, dependencies=[Depends(require_api_key)])
 def webhook_ingest(msg: MessageIn):
-    """Receive real-time webhooks and store messages."""
+    """Accept normalized message payloads and store via create_message."""
     return create_message(msg)
 
 
