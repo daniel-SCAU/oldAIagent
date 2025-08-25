@@ -149,7 +149,6 @@ def init_db_schema() -> None:
 def startup() -> None:
     init_db_pool()
     run_migrations()
-    init_db_schema()
     try:
         scheduler.start()
         scheduler.add_job(process_new_messages, IntervalTrigger(seconds=30))
