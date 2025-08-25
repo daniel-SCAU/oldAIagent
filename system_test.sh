@@ -108,6 +108,45 @@ section_ports() {
     fi
 }
 
+#<<<<<<< codex/create-extensive-system-test-script-sajae3
+# Curl API endpoints to verify responses
+section_endpoints() {
+    echo "\n--- API Endpoint Checks ---"
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "curl not installed"
+        return
+    fi
+
+    # Test FastAPI app if uvicorn available
+    if command -v uvicorn >/dev/null 2>&1; then
+        echo "Starting FastAPI app on port 8000"
+        uvicorn app:app --port 8000 --log-level warning &
+        uvicorn_pid=$!
+        sleep 2
+        local url="http://127.0.0.1:8000/health"
+        echo "GET $url"
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" "$url" || echo "Failed to reach $url"
+        kill "$uvicorn_pid"
+        wait "$uvicorn_pid" 2>/dev/null || true
+    else
+        echo "uvicorn not installed; skipping FastAPI endpoint test"
+    fi
+
+    # Test Flask server
+    if command -v python >/dev/null 2>&1; then
+        echo "Starting Flask server on port 5000"
+        python server.py >/tmp/flask_server.log 2>&1 &
+        flask_pid=$!
+        sleep 2
+        local url="http://127.0.0.1:5000/status"
+        echo "GET $url"
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" "$url" || echo "Failed to reach $url"
+        kill "$flask_pid"
+        wait "$flask_pid" 2>/dev/null || true
+    fi
+}
+
+
 # Run project tests if pytest available
 section_pytests() {
     echo "\n--- Running Pytest ---"
@@ -128,6 +167,10 @@ section_env_vars
 section_python
 section_file_io
 section_ports
+#<<<<<<< codex/create-extensive-system-test-script-sajae3
+section_endpoints
+#=======
+#>>>>>>> main
 section_pytests
 
 echo "\n===== End of Report ====="
