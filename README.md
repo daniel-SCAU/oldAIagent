@@ -20,7 +20,7 @@ Use `python main.py` to launch both servers simultaneously.
 ## Message Ingestors
 
 Modules under `ingestors/` retrieve messages from external platforms and push
-normalized content to the FastAPI `POST /messages` endpoint.
+normalized content to the FastAPI `POST /webhook` endpoint.
 
 | Module | Purpose | Required Credentials |
 |-------|---------|----------------------|
@@ -64,7 +64,7 @@ python -m ingestors.whatsapp
 The FastAPI service now runs a background scheduler powered by
 `APScheduler`. Two periodic jobs are registered on startup:
 
-1. **Message categorization** – new messages inserted via `/messages`
+1. **Message categorization** – new messages inserted via `/webhook`
    are checked for a simple question/statement category and the result is
    stored in the `Chat.category` column.
 2. **Conversation summarization** – pending tasks stored in the
@@ -76,7 +76,7 @@ and the scheduler will fill in the `summary` field once processed.
 
 ## Follow-up Task Detection
 
-Incoming messages sent to `POST /messages` are now scanned for follow-up
+Incoming messages sent to `POST /webhook` are now scanned for follow-up
 phrases such as "please", "can you" or "todo". Detected tasks are stored
 in a dedicated `followup_tasks` table with a default `pending` status so
 they can be reviewed or acted on later.
@@ -106,6 +106,23 @@ setup. PostgreSQL connection parameters can be provided via the
 environment variables `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` and
 `DB_NAME`. An API key is expected in the `x-api-key` header; override the
 default using the `API_KEY` environment variable.
+
+## Database Migrations
+
+Alembic manages schema changes. Apply pending migrations with:
+
+```bash
+alembic upgrade head
+```
+
+To create a new migration after modifying the schema:
+
+```bash
+alembic revision -m "description of change"
+```
+
+The FastAPI service automatically runs `alembic upgrade head` on startup
+to ensure the database is up to date.
 
 ## API Key
 

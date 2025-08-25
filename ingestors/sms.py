@@ -16,10 +16,9 @@ log = logging.getLogger(__name__)
 def _forward(msg: Dict[str, Any]) -> None:
     """Send a normalized SMS message to the FastAPI service."""
     headers = {"X-API-KEY": API_KEY}
-    url = f"{API_BASE}/messages"
-    cid = resolve_contact_id(msg.get("sender", ""))
-    if cid is not None:
-        msg["contact_id"] = cid
+
+    url = f"{API_BASE}/webhook"
+
     try:
         requests.post(url, json=msg, headers=headers, timeout=10).raise_for_status()
     except Exception as exc:
