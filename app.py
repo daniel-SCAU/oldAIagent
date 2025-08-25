@@ -1,9 +1,11 @@
 import os
 import logging
+import json
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 import re
+from secrets import compare_digest
 
 import psycopg2
 import psycopg2.pool
@@ -14,6 +16,8 @@ from pydantic import BaseModel
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from prompt_sender import myGPTAPI
+from alembic import command
+from alembic.config import Config
 
 # ---------------- Config ----------------
 DEBUG = os.getenv("DEBUG", "1") == "1"
@@ -44,10 +48,13 @@ app = FastAPI(
     description="Stores and searches messages across platforms.",
 )
 
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS != ["*"] else ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ------------- DB pool ------------------
@@ -69,6 +76,23 @@ def init_db_pool() -> None:
     except Exception as e:
         pool = None
         log.error("DB pool init failed: %s", e)
+
+
+def run_migrations() -> None:
+    """Apply database migrations using Alembic."""
+    if pool is None:
+        return
+    cfg = Config(os.path.join(os.path.dirname(__file__), "alembic.ini"))
+    db_url = (
+        f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@"
+        f"{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
+    )
+    cfg.set_main_option("sqlalchemy.url", db_url)
+    try:
+        command.upgrade(cfg, "head")
+        log.info("Migrations applied")
+    except Exception as e:
+        log.error("Migration failed: %s", e)
 
 
 def init_db_schema() -> None:
@@ -105,11 +129,22 @@ def init_db_schema() -> None:
             )
             """
         )
+        # create contacts table
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS contacts (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                info JSONB
+            )
+            """
+        )
 
 
 @app.on_event("startup")
 def startup() -> None:
     init_db_pool()
+    run_migrations()
     init_db_schema()
     try:
         scheduler.start()
@@ -145,7 +180,7 @@ def db() -> psycopg2.extensions.connection:
 
 # ------------- Auth ---------------------
 def require_api_key(x_api_key: str = Header(default="")):
-    if x_api_key != API_KEY_EXPECTED:
+    if not compare_digest(x_api_key, API_KEY_EXPECTED):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 # ------------- Models -------------------
@@ -154,6 +189,7 @@ class MessageIn(BaseModel):
     app: str
     message: str
     conversation_id: Optional[str] = None
+    contact_id: Optional[int] = None
 
 class MessageOut(BaseModel):
     id: int
@@ -170,6 +206,17 @@ class MessageRow(BaseModel):
     contact_id: Optional[str] = None
     message_type: Optional[str] = None
     thread_key: Optional[str] = None
+
+
+class ContactIn(BaseModel):
+    name: str
+    info: Optional[Dict[str, Any]] = None
+
+
+class ContactRow(BaseModel):
+    id: int
+    name: str
+    info: Optional[Dict[str, Any]]
 
 class TaskCreate(BaseModel):
     conversation_id: str
@@ -218,6 +265,23 @@ def detect_followup_tasks(text: str) -> List[str]:
 def summarize_messages(messages: List[str]) -> str:
     if not messages:
         return ""
+    api_url = os.getenv("MYGPT_API_URL")
+    api_key = os.getenv("MYGPT_API_KEY")
+    if api_url and api_key:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        prompt = "Summarize the following conversation:\n" + "\n".join(messages)
+        try:
+            resp = requests.post(api_url, headers=headers, json={"prompt": prompt}, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            summary = data.get("response") or data.get("answer")
+            if summary:
+                return summary
+        except Exception as e:
+            log.error("Summary generation failed: %s", e)
     if len(messages) == 1:
         return messages[0]
     return f"{messages[0]} ... {messages[-1]}"
@@ -266,22 +330,46 @@ def health():
 
 @app.post("/messages", response_model=MessageOut, dependencies=[Depends(require_api_key)])
 def create_message(msg: MessageIn):
-    sql_with_conv = """
-        INSERT INTO Chat (sender, app, message, conversation_id)
-        VALUES (%s, %s, %s, %s)
-        RETURNING id, conversation_id, created_at
-    """
-    sql_new_conv = """
-        INSERT INTO Chat (sender, app, message)
-        VALUES (%s, %s, %s)
-        RETURNING id, conversation_id, created_at
-    """
     with db() as conn:
         with conn.cursor() as cur:
             if msg.conversation_id:
-                cur.execute(sql_with_conv, (msg.sender, msg.app, msg.message, msg.conversation_id))
+                if msg.contact_id is not None:
+                    cur.execute(
+                        """
+                        INSERT INTO Chat (sender, app, message, conversation_id, contact_id)
+                        VALUES (%s, %s, %s, %s, %s)
+                        RETURNING id, conversation_id, created_at
+                        """,
+                        (msg.sender, msg.app, msg.message, msg.conversation_id, msg.contact_id),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO Chat (sender, app, message, conversation_id)
+                        VALUES (%s, %s, %s, %s)
+                        RETURNING id, conversation_id, created_at
+                        """,
+                        (msg.sender, msg.app, msg.message, msg.conversation_id),
+                    )
             else:
-                cur.execute(sql_new_conv, (msg.sender, msg.app, msg.message))
+                if msg.contact_id is not None:
+                    cur.execute(
+                        """
+                        INSERT INTO Chat (sender, app, message, contact_id)
+                        VALUES (%s, %s, %s, %s)
+                        RETURNING id, conversation_id, created_at
+                        """,
+                        (msg.sender, msg.app, msg.message, msg.contact_id),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO Chat (sender, app, message)
+                        VALUES (%s, %s, %s)
+                        RETURNING id, conversation_id, created_at
+                        """,
+                        (msg.sender, msg.app, msg.message),
+                    )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=500, detail="Insert failed")
@@ -292,6 +380,12 @@ def create_message(msg: MessageIn):
                 for t in tasks:
                     cur.execute(sql_task, (cid, t))
             return {"id": _id, "conversation_id": str(cid), "created_at": created_at}
+
+
+@app.post("/webhook", response_model=MessageOut, dependencies=[Depends(require_api_key)])
+def webhook_ingest(msg: MessageIn):
+    """Receive real-time webhooks and store messages."""
+    return create_message(msg)
 
 
 @app.post("/suggestions", response_model=SuggestionOut, dependencies=[Depends(require_api_key)])
@@ -347,6 +441,28 @@ def search_messages(q: str = Query(..., min_length=1), limit: int = Query(50, ge
                 "thread_key": r[8],
             })
         return out
+
+
+@app.post("/contacts", response_model=ContactRow, dependencies=[Depends(require_api_key)])
+def create_contact(contact: ContactIn):
+    sql = """
+        INSERT INTO contacts (name, info)
+        VALUES (%s, %s)
+        RETURNING id, name, info
+    """
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(sql, (contact.name, json.dumps(contact.info) if contact.info else None))
+        row = cur.fetchone()
+        return {"id": row[0], "name": row[1], "info": row[2]}
+
+
+@app.get("/contacts", response_model=List[ContactRow], dependencies=[Depends(require_api_key)])
+def list_contacts():
+    sql = "SELECT id, name, info FROM contacts ORDER BY id"
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(sql)
+        rows = cur.fetchall()
+        return [{"id": r[0], "name": r[1], "info": r[2]} for r in rows]
 
 @app.get("/conversations/{conversation_id}/messages",
          response_model=List[MessageRow],
