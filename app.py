@@ -100,11 +100,15 @@ def init_db_schema() -> None:
     if pool is None:
         return
     with db() as conn, conn.cursor() as cur:
-        # add category column to Chat
-        cur.execute("""
+        # add classification columns to Chat
+        cur.execute(
+            """
             ALTER TABLE IF EXISTS Chat
-            ADD COLUMN IF NOT EXISTS category TEXT
-        """)
+            ADD COLUMN IF NOT EXISTS category TEXT,
+            ADD COLUMN IF NOT EXISTS intent TEXT,
+            ADD COLUMN IF NOT EXISTS sentiment TEXT
+            """
+        )
         # create summary_tasks table
         cur.execute(
             """
@@ -238,8 +242,65 @@ class SuggestionOut(BaseModel):
     suggestions: List[str]
 
 # --------- Utilities ---------
-def categorize_message(text: str) -> str:
-    return "question" if "?" in (text or "") else "statement"
+def categorize_message(text: str) -> Dict[str, str]:
+    """Determine intent and sentiment for a message.
+
+    Attempts to use a configured myGPT instance if available. The model is
+    prompted to return a JSON object with ``intent`` (``question``, ``task`` or
+    ``statement``) and ``sentiment`` (``positive``, ``negative`` or ``neutral``).
+    If the model call fails or is not configured, a simple heuristic fallback is
+    used instead.
+    """
+
+    api_url = os.getenv("MYGPT_API_URL")
+    api_key = os.getenv("MYGPT_API_KEY")
+    if api_url and api_key:
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        prompt = (
+            "Classify the following message. Respond with JSON containing keys "
+            "'intent' (question/task/statement) and 'sentiment' (positive/negative/neutral).\n"
+            f"Message: {text}"
+        )
+        try:
+            resp = requests.post(api_url, headers=headers, json={"prompt": prompt}, timeout=20)
+            resp.raise_for_status()
+            data = resp.json()
+            # Some myGPT deployments may return the JSON directly or embed it in 'response'
+            if isinstance(data, dict) and "intent" in data:
+                intent = data.get("intent")
+                sentiment = data.get("sentiment")
+            else:
+                resp_text = data.get("response") or data.get("answer")
+                intent = sentiment = None
+                if resp_text:
+                    try:
+                        parsed = json.loads(resp_text)
+                        intent = parsed.get("intent")
+                        sentiment = parsed.get("sentiment")
+                    except Exception:
+                        pass
+            if intent and sentiment:
+                return {"intent": intent, "sentiment": sentiment}
+        except Exception as e:
+            log.error("categorize_message myGPT failed: %s", e)
+
+    text = text or ""
+    lower = text.lower()
+    intent = "statement"
+    if "?" in text:
+        intent = "question"
+    elif any(k in lower for k in ["please", "can you", "could you", "todo", "kindly", "follow up"]):
+        intent = "task"
+
+    sentiment = "neutral"
+    positive_words = ["good", "great", "love", "like", "excellent", "happy", "awesome", "fantastic"]
+    negative_words = ["bad", "terrible", "hate", "dislike", "awful", "sad", "angry"]
+    if any(w in lower for w in positive_words):
+        sentiment = "positive"
+    elif any(w in lower for w in negative_words):
+        sentiment = "negative"
+
+    return {"intent": intent, "sentiment": sentiment}
 
 
 def detect_followup_tasks(text: str) -> List[str]:
@@ -302,14 +363,16 @@ def summarize_conversation(conversation_id: str) -> str:
 
 def process_new_messages() -> None:
     """Assign categories to uncategorized messages."""
-    sql_select = "SELECT id, message FROM Chat WHERE category IS NULL LIMIT 50"
-    sql_update = "UPDATE Chat SET category=%s WHERE id=%s"
+    sql_select = (
+        "SELECT id, message FROM Chat WHERE intent IS NULL OR sentiment IS NULL LIMIT 50"
+    )
+    sql_update = "UPDATE Chat SET intent=%s, sentiment=%s, category=%s WHERE id=%s"
     with db() as conn, conn.cursor() as cur:
         cur.execute(sql_select)
         rows = cur.fetchall()
         for mid, msg in rows:
-            cat = categorize_message(msg or "")
-            cur.execute(sql_update, (cat, mid))
+            meta = categorize_message(msg or "")
+            cur.execute(sql_update, (meta["intent"], meta["sentiment"], meta["intent"], mid))
 
 
 def process_summary_tasks() -> None:
