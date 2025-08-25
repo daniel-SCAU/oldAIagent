@@ -19,18 +19,24 @@ def test_categorize_message():
 
 
 def test_summarize_messages(monkeypatch):
-    msgs = ["Hello", "How are you?", "Goodbye"]
+    msgs = [
+        {"sender": "A", "message": "Hello"},
+        {"sender": "B", "message": "How are you?"},
+        {"sender": "A", "message": "Goodbye"},
+    ]
 
     class FakeAPI:
         def generate_test_response(self, prompt: str):
+            assert "A: Hello" in prompt
+            assert "B: How are you?" in prompt
+            assert "A: Goodbye" in prompt
             return {
-                "response": "A friendly greeting and inquiry about well-being followed by a farewell."
+                "response": "A friendly greeting and inquiry about well-being followed by a farewell.",
             }
 
     monkeypatch.setattr(app, "myGPTAPI", FakeAPI)
     summary = app.summarize_messages(msgs)
     assert summary == "A friendly greeting and inquiry about well-being followed by a farewell."
-    assert summary != "Hello ... Goodbye"
 
 
 class FakeCursor:
@@ -46,10 +52,12 @@ class FakeCursor:
                 for t in self.data["summary_tasks"]
                 if t["status"] == "pending"
             ]
-        elif sql.startswith("select message from chat"):
+        elif sql.startswith("select sender, message from chat"):
             conv_id = params[0]
             self.result = [
-                (m["message"],) for m in self.data["Chat"] if m["conversation_id"] == conv_id
+                (m["sender"], m["message"])
+                for m in self.data["Chat"]
+                if m["conversation_id"] == conv_id
             ]
         elif sql.startswith("update summary_tasks set summary"):
             summary, tid = params
@@ -168,8 +176,8 @@ def test_process_new_messages(monkeypatch):
 def test_process_summary_tasks(monkeypatch):
     data = {
         "Chat": [
-            {"id": 1, "conversation_id": "1", "message": "Hello"},
-            {"id": 2, "conversation_id": "1", "message": "How are you?"},
+            {"id": 1, "conversation_id": "1", "sender": "Alice", "message": "Hello"},
+            {"id": 2, "conversation_id": "1", "sender": "Bob", "message": "How are you?"},
         ],
         "summary_tasks": [
             {"id": 1, "conversation_id": "1", "status": "pending", "summary": None}
@@ -189,5 +197,4 @@ def test_process_summary_tasks(monkeypatch):
     task = data["summary_tasks"][0]
     assert task["status"] == "completed"
     assert task["summary"] == "Hello and a check-in before goodbye."
-    assert task["summary"] != "Hello ... How are you?"
 
