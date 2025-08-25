@@ -10,6 +10,7 @@ import logging
 from datetime import datetime
 import os
 import requests
+from secrets import compare_digest
 
 from threading import Lock
 
@@ -20,25 +21,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create Flask app
-app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 
-#<<<<<<< codex/add-api-key-validation-in-server.py
-# Read API key from environment
-API_KEY = os.getenv("API_KEY")
+app = Flask(__name__)
+if ALLOWED_ORIGINS == ["*"]:
+    CORS(app)
+else:
+    CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGINS}})
+
+API_KEY = os.getenv("API_KEY", "")
 
 
 @app.before_request
 def check_api_key():
     """Validate the X-API-KEY header before handling requests."""
-    if request.headers.get("X-API-KEY") != API_KEY:
-        return jsonify({"error": "Unauthorized"}), 401
+    if API_KEY:
+        provided = request.headers.get("X-API-KEY", "")
+        if not compare_digest(provided, API_KEY):
+            return jsonify({"error": "Unauthorized"}), 401
 
-# Global variables
-stored_prompt = None
-response_history = []
-#=======
 # In-memory datastore protected by a lock
 
 
@@ -99,7 +100,6 @@ class InMemoryStore:
 
 
 store = InMemoryStore()
-#>>>>>>> main
 
 @app.route('/send-prompt', methods=['POST'])
 def send_prompt():
@@ -186,9 +186,6 @@ def process_response():
 
 @app.route('/test-response', methods=['POST'])
 def generate_test_response():
-    global stored_prompt, response_history
-
-
     try:
         data = request.get_json()
         if not data or 'prompt' not in data:
@@ -231,16 +228,6 @@ def generate_test_response():
         if not test_response:
             logger.warning('Empty response from myGPT API')
             return jsonify({'error': 'Empty response from myGPT API'}), 502
-
-        # Store response in history
-        response_history.append({
-            'timestamp': timestamp,
-            'response': test_response
-        })
-
-        # Keep only last 10 responses
-        if len(response_history) > 10:
-            response_history.pop(0)
 
         logger.info(f'Response received from myGPT API: {len(test_response)} chars')
 
