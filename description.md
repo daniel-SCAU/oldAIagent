@@ -20,7 +20,7 @@ Her fra kan man få opsumering på forskellige tråde, automatisk oprettet opgav
 
 ### FastAPI Service Development
 
-- Implement endpoints: `/health`, `/messages`, `/search`, `/conversations`.
+- Implement endpoints: `/health`, `/webhook`, `/search`, `/conversations`.
 - Add API-key authentication middleware.
 - Launch background jobs for message categorization and summary processing.
 - Integrate embedding/vector lookup for context search.
@@ -35,7 +35,7 @@ Her fra kan man få opsumering på forskellige tråde, automatisk oprettet opgav
 ### Message Ingestion Modules
 
 - Create adapters for Messenger, WhatsApp, Outlook, SMS, Aula, etc.
-- Normalize each platform’s messages and forward to the FastAPI `/messages` endpoint.
+- Normalize each platform’s messages and forward to the FastAPI `/webhook` endpoint.
 - Handle credentials, webhooks, and periodic polling logic for each platform.
 
 ### Classification & Indexing
