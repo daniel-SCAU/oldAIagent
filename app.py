@@ -464,6 +464,43 @@ def list_contacts():
         rows = cur.fetchall()
         return [{"id": r[0], "name": r[1], "info": r[2]} for r in rows]
 
+
+@app.get("/contacts/{contact_id}", response_model=ContactRow, dependencies=[Depends(require_api_key)])
+def get_contact(contact_id: int):
+    sql = "SELECT id, name, info FROM contacts WHERE id = %s"
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(sql, (contact_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        return {"id": row[0], "name": row[1], "info": row[2]}
+
+
+@app.put("/contacts/{contact_id}", response_model=ContactRow, dependencies=[Depends(require_api_key)])
+def update_contact(contact_id: int, contact: ContactIn):
+    sql = """
+        UPDATE contacts
+        SET name=%s, info=%s
+        WHERE id=%s
+        RETURNING id, name, info
+    """
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(sql, (contact.name, json.dumps(contact.info) if contact.info else None, contact_id))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        return {"id": row[0], "name": row[1], "info": row[2]}
+
+
+@app.delete("/contacts/{contact_id}", dependencies=[Depends(require_api_key)])
+def delete_contact(contact_id: int):
+    sql = "DELETE FROM contacts WHERE id = %s"
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(sql, (contact_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Contact not found")
+    return {"ok": True}
+
 @app.get("/conversations/{conversation_id}/messages",
          response_model=List[MessageRow],
          dependencies=[Depends(require_api_key)])

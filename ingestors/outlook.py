@@ -3,6 +3,7 @@ import os
 from typing import Any, Dict, List
 
 import requests
+from . import resolve_contact_id
 
 API_BASE = os.getenv("APP_API_URL", "http://127.0.0.1:8000")
 API_KEY = os.getenv("API_KEY", "dev-api-key")
@@ -16,6 +17,9 @@ def _forward(msg: Dict[str, Any]) -> None:
     """Send a normalized Outlook message to the FastAPI service."""
     headers = {"X-API-KEY": API_KEY}
     url = f"{API_BASE}/messages"
+    cid = resolve_contact_id(msg.get("sender", ""))
+    if cid is not None:
+        msg["contact_id"] = cid
     try:
         requests.post(url, json=msg, headers=headers, timeout=10).raise_for_status()
     except Exception as exc:
