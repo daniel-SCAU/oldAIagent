@@ -322,34 +322,75 @@ def detect_followup_tasks(text: str) -> List[str]:
     return tasks
 
 
-def summarize_messages(messages: List[str]) -> str:
+def summarize_messages(messages: List[Any]) -> str:
+    """Use myGPT to summarize a conversation history.
+
+    The entire conversation history is included in the prompt to produce a
+    coherent summary.  Each message can be either a plain string or a mapping
+    with ``sender`` and ``message`` keys.  Any exception raised by the API call
+    will bubble up to the caller so it can decide how to handle failures.
+    """
+
     if not messages:
         return ""
-    prompt = "Summarize the following conversation:\n" + "\n".join(messages)
-    try:
-        api = myGPTAPI()
-        result = api.generate_test_response(prompt)
-        summary = result.get("response") or result.get("summary") or result.get("answer")
-        if summary:
-            return summary.strip()
-    except Exception as e:
-        log.error("Summary generation failed: %s", e)
-    if len(messages) == 1:
-        return messages[0]
-    return f"{messages[0]} ... {messages[-1]}"
+
+    lines: List[str] = [
+        "You are an AI assistant tasked with summarizing conversations.",
+        "Focus on key points, decisions and action items.",
+        "Conversation:",
+    ]
+
+    for item in messages:
+        if isinstance(item, dict):
+            sender = item.get("sender")
+            text = item.get("message", "")
+            if sender:
+                lines.append(f"{sender}: {text}")
+            else:
+                lines.append(text)
+        else:
+            lines.append(str(item))
+
+    prompt = "\n".join(lines)
+    api = myGPTAPI()
+    result = api.generate_test_response(prompt)
+    summary = result.get("response") or result.get("summary") or result.get("answer")
+    if summary:
+        return summary.strip()
+    raise ValueError("No summary returned from myGPT API")
 
 
 def summarize_conversation(conversation_id: str) -> str:
+    """Fetch a conversation and return an AI generated summary.
+
+    If the myGPT API call fails for any reason a simple fallback summary using
+    the first and last messages is returned instead of raising an exception.
+    """
+
     sql = """
-        SELECT message FROM Chat
+        SELECT sender, message FROM Chat
         WHERE conversation_id = %s
         ORDER BY created_at ASC
     """
     with db() as conn, conn.cursor() as cur:
         cur.execute(sql, (conversation_id,))
         rows = cur.fetchall()
-    msgs = [r[0] for r in rows if r and r[0]]
-    return summarize_messages(msgs)
+    msgs = [
+        {"sender": r[0], "message": r[1]}
+        for r in rows
+        if r and r[1]
+    ]
+
+    try:
+        return summarize_messages(msgs)
+    except Exception as e:
+        log.error("Summary generation failed: %s", e)
+        texts = [m["message"] for m in msgs if m.get("message")]
+        if not texts:
+            return ""
+        if len(texts) == 1:
+            return texts[0]
+        return f"{texts[0]} ... {texts[-1]}"
 
 
 def process_new_messages() -> None:
