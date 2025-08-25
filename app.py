@@ -353,17 +353,24 @@ def summarize_conversation(conversation_id: str) -> str:
 
 
 def process_new_messages() -> None:
-    """Assign categories to uncategorized messages."""
+    """Assign intent and sentiment to messages lacking classification."""
     sql_select = (
-        "SELECT id, message FROM Chat WHERE intent IS NULL OR sentiment IS NULL LIMIT 50"
+        "SELECT id, message FROM Chat "
+        "WHERE intent IS NULL OR sentiment IS NULL "
+        "LIMIT 50"
     )
-    sql_update = "UPDATE Chat SET intent=%s, sentiment=%s, category=%s WHERE id=%s"
+    sql_update = (
+        "UPDATE Chat SET intent=%s, sentiment=%s, category=%s WHERE id=%s"
+    )
     with db() as conn, conn.cursor() as cur:
         cur.execute(sql_select)
         rows = cur.fetchall()
         for mid, msg in rows:
             meta = categorize_message(msg or "")
-            cur.execute(sql_update, (meta["intent"], meta["sentiment"], meta["intent"], mid))
+            cur.execute(
+                sql_update,
+                (meta["intent"], meta["sentiment"], meta["intent"], mid),
+            )
 
 
 def process_summary_tasks() -> None:
