@@ -29,7 +29,7 @@ if ALLOWED_ORIGINS == ["*"]:
 else:
     CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGINS}})
 
-API_KEY = os.getenv("API_KEY", "")
+API_KEY = os.getenv("API_KEY", "dev-api-key")
 
 
 @app.before_request

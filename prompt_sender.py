@@ -44,6 +44,10 @@ class myGPTAPI:
             'Content-Type': 'application/json',
             'User-Agent': 'myGPT-Python-Client/1.0'
         })
+        # Include API key header if provided (aligns with server's X-API-KEY)
+        api_key = os.getenv("API_KEY", "")
+        if api_key:
+            self.session.headers.update({'X-API-KEY': api_key})
     
     def send_prompt(self, prompt: str) -> Dict[str, Any]:
         """

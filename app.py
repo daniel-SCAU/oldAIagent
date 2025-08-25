@@ -31,10 +31,7 @@ DB_CONFIG = {
     "dbname": os.getenv("DB_NAME", "postgres"),
 }
 
-EMBEDDING_ENDPOINT = os.getenv("OLLAMA_EMBEDDINGS_URL", "http://127.0.0.1:11434/api/embeddings")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "mxbai-embed-large:335m")
-SUPABASE_REST_URL = os.getenv("SUPABASE_REST_URL", "http://127.0.0.1:54321")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
 
 logging.basicConfig(
     level=logging.DEBUG if DEBUG else logging.INFO,
@@ -165,6 +162,11 @@ def init_db_schema() -> None:
 def startup() -> None:
     init_db_pool()
     run_migrations()
+    # Ensure required tables/columns exist when the app starts
+    try:
+        init_db_schema()
+    except Exception as e:
+        log.error("Schema init failed: %s", e)
     try:
         scheduler.start()
         scheduler.add_job(process_new_messages, IntervalTrigger(seconds=30))
@@ -517,6 +519,18 @@ def create_message(msg: MessageIn):
             if not row:
                 raise HTTPException(status_code=500, detail="Insert failed")
             _id, cid, created_at = row
+            # keep search_vector up to date for full-text search
+            try:
+                cur.execute(
+                    """
+                    UPDATE Chat
+                    SET search_vector = to_tsvector('english', message)
+                    WHERE id = %s
+                    """,
+                    (_id,)
+                )
+            except Exception as e:
+                log.error("Failed to update search_vector for id=%s: %s", _id, e)
             tasks = detect_followup_tasks(msg.message)
             if tasks:
                 sql_task = "INSERT INTO followup_tasks (conversation_id, task) VALUES (%s, %s)"
@@ -552,10 +566,29 @@ def generate_suggestions(req: SuggestionIn):
     try:
         result = api.generate_test_response(prompt)
         text = result.get("response", "")
+        suggestions = [s.strip() for s in text.splitlines() if s.strip()][: req.limit]
+        if suggestions:
+            return {"suggestions": suggestions}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"myGPT error: {e}")
-    suggestions = [s.strip() for s in text.splitlines() if s.strip()][: req.limit]
-    return {"suggestions": suggestions}
+        log.error("/suggestions myGPT failed: %s", e)
+
+    # graceful fallback suggestions
+    last_msg = (rows[-1][1] if rows else "") or ""
+    lower = last_msg.lower()
+    defaults: List[str] = []
+    if "?" in last_msg or any(k in lower for k in ["?", "how", "what", "when", "hvornår", "mødes"]):
+        defaults = [
+            "Tak for din besked – jeg vender tilbage med et svar snart.",
+            "Kan du dele lidt flere detaljer?",
+            "Lad os tage det på et kort opkald, passer i morgen?",
+        ]
+    else:
+        defaults = [
+            "Modtaget – jeg vender tilbage snarest.",
+            "Lyder godt. Jeg følger op.",
+            "Jeg kigger på det og vender tilbage i dag.",
+        ]
+    return {"suggestions": defaults[: req.limit]}
 
 @app.get("/search", response_model=List[MessageRow], dependencies=[Depends(require_api_key)])
 def search_messages(q: str = Query(..., min_length=1), limit: int = Query(50, ge=1, le=500)):
@@ -769,36 +802,7 @@ def delete_task(task_id: int):
         cur.execute(sql, (task_id,))
     return {"ok": True}
 
-# ---------- Optional: context RPC (kept) ----------
-def _embedding(text: str):
-    try:
-        resp = requests.post(EMBEDDING_ENDPOINT, json={"model": EMBEDDING_MODEL, "prompt": text}, timeout=20)
-        resp.raise_for_status()
-        return resp.json().get("embedding")
-    except Exception as e:
-        log.error("Embedding error: %s", e)
-        return None
 
-@app.post("/context", dependencies=[Depends(require_api_key)])
-def match_context(text: str, match_threshold: float = 0.75, match_count: int = 5) -> Dict[str, Any]:
-    if not SUPABASE_SERVICE_ROLE_KEY:
-        raise HTTPException(status_code=500, detail="Vector matching not configured")
-    emb = _embedding(text)
-    if not emb:
-        raise HTTPException(status_code=500, detail="Embedding failed")
-    headers = {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Content-Type": "application/json",
-    }
-    payload = {"query_embedding": emb, "match_threshold": match_threshold, "match_count": match_count}
-    try:
-        r = requests.post(f"{SUPABASE_REST_URL}/rest/v1/rpc/match_documents", headers=headers, json=payload, timeout=25)
-        r.raise_for_status()
-        return {"context": r.json()}
-    except Exception as e:
-        log.error("Context RPC failed: %s", e)
-        raise HTTPException(status_code=500, detail="Context retrieval failed")
 
 if __name__ == "__main__":
     import uvicorn
