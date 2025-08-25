@@ -265,23 +265,15 @@ def detect_followup_tasks(text: str) -> List[str]:
 def summarize_messages(messages: List[str]) -> str:
     if not messages:
         return ""
-    api_url = os.getenv("MYGPT_API_URL")
-    api_key = os.getenv("MYGPT_API_KEY")
-    if api_url and api_key:
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        prompt = "Summarize the following conversation:\n" + "\n".join(messages)
-        try:
-            resp = requests.post(api_url, headers=headers, json={"prompt": prompt}, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-            summary = data.get("response") or data.get("answer")
-            if summary:
-                return summary
-        except Exception as e:
-            log.error("Summary generation failed: %s", e)
+    prompt = "Summarize the following conversation:\n" + "\n".join(messages)
+    try:
+        api = myGPTAPI()
+        result = api.generate_test_response(prompt)
+        summary = result.get("response") or result.get("summary") or result.get("answer")
+        if summary:
+            return summary.strip()
+    except Exception as e:
+        log.error("Summary generation failed: %s", e)
     if len(messages) == 1:
         return messages[0]
     return f"{messages[0]} ... {messages[-1]}"
@@ -316,12 +308,17 @@ def process_summary_tasks() -> None:
     """Process pending summary tasks."""
     sql_pending = "SELECT id, conversation_id FROM summary_tasks WHERE status = 'pending'"
     sql_update = "UPDATE summary_tasks SET summary=%s, status='completed' WHERE id=%s"
+    sql_fail = "UPDATE summary_tasks SET status='failed' WHERE id=%s"
     with db() as conn, conn.cursor() as cur:
         cur.execute(sql_pending)
         tasks = cur.fetchall()
         for tid, cid in tasks:
-            summary = summarize_conversation(cid)
-            cur.execute(sql_update, (summary, tid))
+            try:
+                summary = summarize_conversation(cid)
+                cur.execute(sql_update, (summary, tid))
+            except Exception as e:
+                log.error("Failed to summarize %s: %s", cid, e)
+                cur.execute(sql_fail, (tid,))
 
 # ------------- Endpoints ----------------
 @app.get("/health")

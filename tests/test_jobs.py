@@ -11,9 +11,19 @@ def test_categorize_message():
     assert app.categorize_message("All good") == "statement"
 
 
-def test_summarize_messages():
+def test_summarize_messages(monkeypatch):
     msgs = ["Hello", "How are you?", "Goodbye"]
-    assert app.summarize_messages(msgs) == "Hello ... Goodbye"
+
+    class FakeAPI:
+        def generate_test_response(self, prompt: str):
+            return {
+                "response": "A friendly greeting and inquiry about well-being followed by a farewell."
+            }
+
+    monkeypatch.setattr(app, "myGPTAPI", FakeAPI)
+    summary = app.summarize_messages(msgs)
+    assert summary == "A friendly greeting and inquiry about well-being followed by a farewell."
+    assert summary != "Hello ... Goodbye"
 
 
 class FakeCursor:
@@ -40,6 +50,11 @@ class FakeCursor:
                 if t["id"] == tid:
                     t["summary"] = summary
                     t["status"] = "completed"
+        elif sql.startswith("update summary_tasks set status='failed'"):
+            tid = params[0]
+            for t in self.data["summary_tasks"]:
+                if t["id"] == tid:
+                    t["status"] = "failed"
 
     def fetchall(self):
         return self.result
@@ -84,9 +99,15 @@ def test_process_summary_tasks(monkeypatch):
     def _fake_db():
         return fake_db(data)
 
+    class FakeAPI:
+        def generate_test_response(self, prompt: str):
+            return {"response": "Hello and a check-in before goodbye."}
+
     monkeypatch.setattr(app, "db", _fake_db)
+    monkeypatch.setattr(app, "myGPTAPI", FakeAPI)
     app.process_summary_tasks()
     task = data["summary_tasks"][0]
     assert task["status"] == "completed"
-    assert task["summary"].startswith("Hello")
+    assert task["summary"] == "Hello and a check-in before goodbye."
+    assert task["summary"] != "Hello ... How are you?"
 
