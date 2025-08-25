@@ -3,6 +3,7 @@ import os
 from typing import Any, Dict, List
 
 import requests
+from tenacity import before_sleep_log, retry, stop_after_attempt, wait_exponential
 from . import resolve_contact_id
 
 API_BASE = os.getenv("APP_API_URL", "http://127.0.0.1:8000")
@@ -13,6 +14,16 @@ MESSENGER_PAGE_TOKEN = os.getenv("MESSENGER_PAGE_TOKEN")
 log = logging.getLogger(__name__)
 
 
+@retry(
+    reraise=True,
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    before_sleep=before_sleep_log(log, logging.WARNING),
+)
+def _post_with_retry(url: str, msg: Dict[str, Any], headers: Dict[str, str]):
+    return requests.post(url, json=msg, headers=headers, timeout=10)
+
+
 def _forward(msg: Dict[str, Any]) -> None:
     """Send a normalized message to the FastAPI service."""
     headers = {"X-API-KEY": API_KEY}
@@ -20,7 +31,7 @@ def _forward(msg: Dict[str, Any]) -> None:
     url = f"{API_BASE}/webhook"
 
     try:
-        requests.post(url, json=msg, headers=headers, timeout=10).raise_for_status()
+        _post_with_retry(url, msg, headers).raise_for_status()
     except Exception as exc:
         log.error("Failed forwarding Messenger message: %s", exc)
 
