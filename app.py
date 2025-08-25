@@ -106,7 +106,23 @@ def init_db_schema() -> None:
             ALTER TABLE IF EXISTS Chat
             ADD COLUMN IF NOT EXISTS category TEXT,
             ADD COLUMN IF NOT EXISTS intent TEXT,
-            ADD COLUMN IF NOT EXISTS sentiment TEXT
+            ADD COLUMN IF NOT EXISTS sentiment TEXT,
+            ADD COLUMN IF NOT EXISTS search_vector TSVECTOR
+            """
+        )
+        # index for full text search
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS chat_search_vector_idx
+            ON Chat USING GIN (search_vector)
+            """
+        )
+        # populate search_vector for existing rows
+        cur.execute(
+            """
+            UPDATE Chat
+            SET search_vector = to_tsvector('english', message)
+            WHERE search_vector IS NULL
             """
         )
         # create summary_tasks table
@@ -475,7 +491,16 @@ def generate_suggestions(req: SuggestionIn):
 
 @app.get("/search", response_model=List[MessageRow], dependencies=[Depends(require_api_key)])
 def search_messages(q: str = Query(..., min_length=1), limit: int = Query(50, ge=1, le=500)):
-    sql = """
+    ts_query = " & ".join(q.strip().split())
+    sql_ts = """
+        SELECT id, conversation_id, sender, app, message, created_at,
+               contact_id, message_type, thread_key
+        FROM Chat
+        WHERE search_vector @@ to_tsquery('english', %s)
+        ORDER BY created_at DESC
+        LIMIT %s
+    """
+    sql_ilike = """
         SELECT id, conversation_id, sender, app, message, created_at,
                contact_id, message_type, thread_key
         FROM Chat
@@ -484,7 +509,20 @@ def search_messages(q: str = Query(..., min_length=1), limit: int = Query(50, ge
         LIMIT %s
     """
     with db() as conn, conn.cursor() as cur:
-        cur.execute(sql, (f"%{q}%", limit))
+        # check if search_vector column exists
+        cur.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='chat' AND column_name='search_vector'
+            )
+            """
+        )
+        has_sv = cur.fetchone()[0]
+        if has_sv:
+            cur.execute(sql_ts, (ts_query, limit))
+        else:
+            cur.execute(sql_ilike, (f"%{q}%", limit))
         rows = cur.fetchall()
         out = []
         for r in rows:
