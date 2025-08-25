@@ -108,6 +108,7 @@ section_ports() {
     fi
 }
 
+#<<<<<<< codex/create-extensive-system-test-script-sajae3
 # Curl API endpoints to verify responses
 section_endpoints() {
     echo "\n--- API Endpoint Checks ---"
@@ -145,6 +146,7 @@ section_endpoints() {
     fi
 }
 
+
 # Run project tests if pytest available
 section_pytests() {
     echo "\n--- Running Pytest ---"
@@ -165,7 +167,10 @@ section_env_vars
 section_python
 section_file_io
 section_ports
+#<<<<<<< codex/create-extensive-system-test-script-sajae3
 section_endpoints
+#=======
+#>>>>>>> main
 section_pytests
 
 echo "\n===== End of Report ====="
