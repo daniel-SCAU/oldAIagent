@@ -444,7 +444,7 @@ def create_message(msg: MessageIn):
 
 @app.post("/webhook", response_model=MessageOut, dependencies=[Depends(require_api_key)])
 def webhook_ingest(msg: MessageIn):
-    """Receive real-time webhooks and store messages."""
+    """Accept normalized message payloads and store via create_message."""
     return create_message(msg)
 
 
