@@ -7,7 +7,7 @@ This document provides `curl` examples for all HTTP endpoints exposed by the pro
 ### `POST /send-prompt`
 Send a prompt to the server.
 ```bash
-curl -X POST http://localhost:5000/send-prompt \
+curl -X POST http://localhost:8001/send-prompt \
   -H "X-API-KEY: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"prompt":"Hello from curl"}'
@@ -16,21 +16,21 @@ curl -X POST http://localhost:5000/send-prompt \
 ### `GET /get-prompt`
 Retrieve the latest prompt and clear it.
 ```bash
-curl http://localhost:5000/get-prompt \
+curl http://localhost:8001/get-prompt \
   -H "X-API-KEY: $API_KEY"
 ```
 
 ### `POST /ack-prompt`
 Acknowledge and clear the stored prompt.
 ```bash
-curl -X POST http://localhost:5000/ack-prompt \
+curl -X POST http://localhost:8001/ack-prompt \
   -H "X-API-KEY: $API_KEY"
 ```
 
 ### `POST /process-response`
 Send an AI response from the userscript.
 ```bash
-curl -X POST http://localhost:5000/process-response \
+curl -X POST http://localhost:8001/process-response \
   -H "X-API-KEY: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"response":"This is a test response"}'
@@ -39,7 +39,7 @@ curl -X POST http://localhost:5000/process-response \
 ### `POST /test-response`
 Request a test response from the myGPT API.
 ```bash
-curl -X POST http://localhost:5000/test-response \
+curl -X POST http://localhost:8001/test-response \
   -H "X-API-KEY: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"prompt":"Need a quick summary"}'
@@ -48,21 +48,21 @@ curl -X POST http://localhost:5000/test-response \
 ### `GET /status`
 Check server status and recent activity.
 ```bash
-curl http://localhost:5000/status \
+curl http://localhost:8001/status \
   -H "X-API-KEY: $API_KEY"
 ```
 
 ### `GET /history`
 Fetch response history.
 ```bash
-curl http://localhost:5000/history \
+curl http://localhost:8001/history \
   -H "X-API-KEY: $API_KEY"
 ```
 
 ### `POST /clear`
 Clear the stored prompt and response history.
 ```bash
-curl -X POST http://localhost:5000/clear \
+curl -X POST http://localhost:8001/clear \
   -H "X-API-KEY: $API_KEY"
 ```
 

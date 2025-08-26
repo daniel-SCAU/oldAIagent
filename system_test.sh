@@ -138,7 +138,7 @@ section_endpoints() {
         python server.py >/tmp/flask_server.log 2>&1 &
         flask_pid=$!
         sleep 2
-        local url="http://127.0.0.1:5000/status"
+        local url="http://127.0.0.1:8001/status"
         echo "GET $url"
         curl -s -o /dev/null -w "HTTP %{http_code}\n" "$url" || echo "Failed to reach $url"
         kill "$flask_pid"

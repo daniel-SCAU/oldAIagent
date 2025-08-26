@@ -37,7 +37,7 @@ A Python-based API server and client for automating myGPT interactions through a
 python server.py
 ```
 
-The server will start on `http://localhost:5000`
+The server will start on `http://localhost:8001`
 
 ### 2. Use the Interactive Client
 
@@ -82,7 +82,7 @@ else:
 
 #### Constructor
 ```python
-api = myGPTAPI(server_url="http://localhost:5000")
+api = myGPTAPI(server_url="http://localhost:8001")
 ```
 
 #### Methods

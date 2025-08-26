@@ -297,7 +297,7 @@ if __name__ == '__main__':
     print('='*60)
     print('myGPT API Server - Python Version')
     print('='*60)
-    print('Server starting on http://localhost:5000')
+    print('Server starting on http://localhost:8001')
     print('Available endpoints:')
     print('  POST /send-prompt    - Send a prompt from Python')
     print('  GET  /get-prompt     - Get prompt (userscript)')

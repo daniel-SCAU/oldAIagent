@@ -29,7 +29,7 @@ class myGPTConfig:
 class myGPTAPI:
     """Python client for the myGPT API server."""
 
-    def __init__(self, server_url: str = "http://localhost:5000", config: Optional[myGPTConfig] = None):
+    def __init__(self, server_url: str = "http://localhost:8001", config: Optional[myGPTConfig] = None):
         """
         Initialize the myGPT API client.
 

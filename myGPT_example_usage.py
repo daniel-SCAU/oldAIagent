@@ -93,7 +93,7 @@ def error_handling():
     
     # Now try with correct server
     try:
-        api = myGPTAPI()  # Default localhost:5000
+        api = myGPTAPI()  # Default localhost:8001
         result = api.ask("This should work")
         print("Success with correct server!")
         
@@ -159,7 +159,7 @@ if __name__ == "__main__":
     print("=" * 50)
     
     # Make sure the server is running before running examples
-    print("Note: Make sure the myGPT API server is running on localhost:5000")
+    print("Note: Make sure the myGPT API server is running on localhost:8001")
     print("You can start it with: python server.py")
     print()
     

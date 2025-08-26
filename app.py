@@ -603,7 +603,7 @@ def generate_suggestions(req: SuggestionIn):
 def gpthook(prompt: GPTPrompt) -> GPTResponse:
     """Send a prompt to myGPT and return the response."""
     # Get myGPT server URL from environment or use default
-    mygpt_server_url = os.getenv("MYGPT_SERVER_URL", "http://localhost:5000")
+    mygpt_server_url = os.getenv("MYGPT_SERVER_URL", "http://localhost:8001")
     api = myGPTAPI(server_url=mygpt_server_url)
     
     try:
