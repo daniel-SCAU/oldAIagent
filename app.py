@@ -258,6 +258,14 @@ class SuggestionIn(BaseModel):
 class SuggestionOut(BaseModel):
     suggestions: List[str]
 
+
+class GPTPrompt(BaseModel):
+    prompt: str
+
+
+class GPTResponse(BaseModel):
+    response: str
+
 # --------- Utilities ---------
 def categorize_message(text: str) -> Dict[str, str]:
     """Determine intent and sentiment for a message.
@@ -589,6 +597,21 @@ def generate_suggestions(req: SuggestionIn):
             "Jeg kigger på det og vender tilbage i dag.",
         ]
     return {"suggestions": defaults[: req.limit]}
+
+
+@app.post("/gpthook", response_model=GPTResponse, dependencies=[Depends(require_api_key)])
+def gpthook(prompt: GPTPrompt):
+    """Send a prompt to myGPT and return the response."""
+    api = myGPTAPI()
+    try:
+        result = api.generate_test_response(prompt.prompt)
+        text = result.get("response", "")
+        if not text:
+            raise ValueError("No response returned from myGPT API")
+        return {"response": text}
+    except Exception as e:
+        log.error("/gpthook myGPT failed: %s", e)
+        raise HTTPException(status_code=500, detail="myGPT API error")
 
 @app.get("/search", response_model=List[MessageRow], dependencies=[Depends(require_api_key)])
 def search_messages(q: str = Query(..., min_length=1), limit: int = Query(50, ge=1, le=500)):
