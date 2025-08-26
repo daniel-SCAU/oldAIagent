@@ -600,15 +600,24 @@ def generate_suggestions(req: SuggestionIn):
 
 
 @app.post("/gpthook", response_model=GPTResponse, dependencies=[Depends(require_api_key)])
-def gpthook(prompt: GPTPrompt):
+def gpthook(prompt: GPTPrompt) -> GPTResponse:
     """Send a prompt to myGPT and return the response."""
-    api = myGPTAPI()
+    # Get myGPT server URL from environment or use default
+    mygpt_server_url = os.getenv("MYGPT_SERVER_URL", "http://localhost:5000")
+    api = myGPTAPI(server_url=mygpt_server_url)
+    
     try:
         result = api.generate_test_response(prompt.prompt)
         text = result.get("response", "")
         if not text:
             raise ValueError("No response returned from myGPT API")
-        return {"response": text}
+        return GPTResponse(response=text)
+    except ValueError as e:
+        log.error("/gpthook validation error: %s", e)
+        raise HTTPException(status_code=400, detail=str(e))
+    except requests.RequestException as e:
+        log.error("/gpthook myGPT connection failed: %s", e)
+        raise HTTPException(status_code=503, detail="myGPT service unavailable")
     except Exception as e:
         log.error("/gpthook myGPT failed: %s", e)
         raise HTTPException(status_code=500, detail="myGPT API error")
